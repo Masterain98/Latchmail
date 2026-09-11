@@ -965,7 +965,9 @@ function SettingsPage() {
   const [error, setError] = useState("");
   async function addDomain(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const f = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const f = new FormData(form);
+    setError("");
     try {
       await request("/domains", {
         method: "POST",
@@ -975,7 +977,7 @@ function SettingsPage() {
           enabled: true,
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       void domains.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : t("保存失败"));
@@ -983,13 +985,15 @@ function SettingsPage() {
   }
   async function addTag(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const f = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const f = new FormData(form);
+    setError("");
     try {
       await request("/tags", {
         method: "POST",
         body: JSON.stringify({ name: f.get("name") }),
       });
-      e.currentTarget.reset();
+      form.reset();
       void tags.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : t("保存失败"));

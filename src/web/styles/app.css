@@ -114,7 +114,9 @@ aside {
   display: grid;
 }
 .shell nav {
-  display: grid;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   gap: 5px;
 }
 .shell nav a {
@@ -150,7 +152,7 @@ aside {
   transform: translateY(1px);
 }
 .shell nav .language-switch {
-  margin-top: 8px;
+  margin-top: auto;
   width: 100%;
   justify-content: flex-start;
   border-color: transparent;
@@ -755,6 +757,37 @@ textarea {
   min-width: 0;
   color: var(--ink);
 }
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4.5 6.25 3.5 3.5 3.5-3.5' stroke='%23777570' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 16px;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s,
+    box-shadow 0.2s;
+}
+select:hover:not(:disabled) {
+  border-color: #bcb8b0;
+  background-color: #fbfbfa;
+}
+select:focus-visible {
+  border-color: var(--blue-ink);
+  box-shadow: 0 0 0 3px rgba(40, 95, 130, 0.1);
+}
+select:disabled {
+  color: #9b9891;
+  background-color: #f1f0ed;
+  cursor: not-allowed;
+}
+select option {
+  color: var(--ink);
+  background: var(--paper);
+}
 textarea {
   min-height: 88px;
   resize: vertical;
@@ -985,6 +1018,7 @@ textarea {
     display: none;
   }
   .shell nav {
+    display: grid;
     grid-template-columns: repeat(4, 1fr);
   }
   .shell nav a,
