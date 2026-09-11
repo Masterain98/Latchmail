@@ -1,0 +1,9 @@
+From: Service <notify@example.net>
+To: header-only@example.net
+Subject: Registration received
+Date: Fri, 11 Sep 2026 07:00:00 +0000
+Message-ID: <fixture-plain@example.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your registration has been received.

@@ -1,0 +1,18 @@
+From: Service <notify@example.net>
+To: asus@example.com
+Subject: Attachment fixture
+Message-ID: <fixture-attachment@example.net>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="fixture-outer"
+
+--fixture-outer
+Content-Type: text/plain; charset=utf-8
+
+Attached is the synthetic report.
+--fixture-outer
+Content-Type: text/plain; name="report.txt"
+Content-Disposition: attachment; filename="report.txt"
+Content-Transfer-Encoding: base64
+
+U3ludGhldGljIGF0dGFjaG1lbnQgY29udGVudC4K
+--fixture-outer--
