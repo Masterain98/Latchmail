@@ -9,3 +9,5 @@
 列表筛选参数包括：`cursor`、`limit`、`domain_id`、`tag_id`、`recipient`、`registered`、`untagged`、`unread`、`archived`、`webhook_status`、`q`。默认限制为 50，最大为 100。搜索使用参数化且有界的 D1 `instr()` 查询，只搜索元数据和当前登记信息，不会下载 R2 正文。
 
 预期状态码：400 表示校验失败，401 表示未认证，403 表示 CSRF/Origin 失败，404 表示不存在，409 表示冲突，410 表示内容已过期，429 表示登录限速。敏感响应使用 `Cache-Control: private, no-store`。
+
+`GET /healthz` 无需认证，并在响应前初始化或升级绑定的 D1。结构就绪时返回 `200 { "status": "ok", "database": "ready" }`；初始化无法完成时返回 `503 { "status": "unavailable", "database": "migration_failed" }`。

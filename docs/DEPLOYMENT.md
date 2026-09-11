@@ -1,20 +1,46 @@
 [English](DEPLOYMENT.md) · [简体中文](DEPLOYMENT_CN.md)
 
-# Deployment
+# Operator deployment
 
-For a browser-only Cloudflare workflow, see [Dashboard deployment](DEPLOYMENT_CLOUDFLARE_DASHBOARD.md). The steps below use Wrangler from an approved operator environment.
+The preferred production shape is one Worker, one D1 database, one private R2 bucket and the generated per-minute Cron. Resource names are user-selected; suggestions such as `latchmail-db` and `latchmail-mail` are not requirements.
 
-Recommended production plan: Workers Paid, one Worker, one D1 database, one private R2 bucket and one `* * * * *` Cron. Create separate staging and production resources, replace only the placeholder IDs/origins in `wrangler.jsonc`, and never share their data.
+## Prerequisites
 
-1. Install Node 22+, run `npm ci`, `npm run check`, create D1/R2 resources, and apply the target migration command.
-2. In Cloudflare Dashboard, open the target Worker's **Settings → Variables and Secrets**. Add `ADMIN_PASSWORD` and `SESSION_SECRET` as encrypted Secrets with independent values of at least 32 high-entropy characters. Optionally add an independent `ADMIN_API_TOKEN` to enable Bearer API access. Add `WEBHOOK_SIGNING_SECRET` only when Webhooks are enabled; it must be standard Base64 of exactly 32 random bytes. Never save these values as plaintext variables or in `wrangler.jsonc`.
-3. As a CLI alternative, run `wrangler secret put ADMIN_PASSWORD --env <environment>`, `wrangler secret put SESSION_SECRET --env <environment>`, and the corresponding commands for optional `ADMIN_API_TOKEN` and `WEBHOOK_SIGNING_SECRET`.
-4. Set the real same-origin HTTPS `APP_ORIGIN`, deploy staging, verify password login, cookie/CSRF writes, optional Bearer access and private downloads, then deploy production manually from an approved operator environment.
-5. For each domain, enable Cloudflare Email Routing without overwriting an existing mail provider unintentionally. Configure the domain or explicit subdomain MX/routing, set Catch-all to Send to Worker, then add and enable the exact domain in this app. Existing specific rules may take precedence.
-6. Send from an independent external mailbox to one registered and one random unregistered address. Verify Worker → WebUI → HTTPS webhook and a forced retry before calling cloud acceptance complete.
+Create D1 and R2 before deployment and keep R2 private. Record the D1 name and UUID and the R2 bucket name. Configure the following process environment for `npm run deploy:cloudflare`:
 
-For an existing deployment, add `ADMIN_PASSWORD` and optional `ADMIN_API_TOKEN` before deploying this version. Keep the old `ADMIN_TOKEN` during the rollback window, update API clients at cutover, and delete the old Secret only after acceptance. Keeping `SESSION_SECRET` unchanged preserves current browser sessions; rotating it invalidates every session.
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `LATCHMAIL_WORKER_NAME` | Outside Workers Builds | Existing or intended Worker name |
+| `LATCHMAIL_D1_DATABASE_NAME` | Yes | Existing D1 database name |
+| `LATCHMAIL_D1_DATABASE_ID` | Yes | Existing D1 UUID |
+| `LATCHMAIL_R2_BUCKET_NAME` | Yes | Existing private R2 bucket name |
+| `APP_ORIGIN` | Yes | Exact HTTPS WebUI Origin without a trailing slash |
+| `ENVIRONMENT` | No | Operational label; default `production` |
 
-Attachment retention and the Webhook URL/enabled state remain runtime application settings in D1. Change them in WebUI without redeploying the Worker.
+Set `ADMIN_PASSWORD` and `SESSION_SECRET` as independent 32–4096 character values. `ADMIN_API_TOKEN` is optional. `WEBHOOK_SIGNING_SECRET` is required only when Webhooks are enabled and must be standard Base64 for exactly 32 random bytes. The deploy command validates values without printing them and uploads them through an ignored temporary Secrets file.
 
-Local `.eml` submission: run Wrangler, migrate local D1, add an enabled domain, then `npm run email:fixture -- tests/fixtures/attachment.eml sender@example.net asus@example.com`. Registration UI supports common ASCII local-parts; delivered international local-parts are not rejected by the registration validator and are stored using the explicit lowercase application policy.
+When running outside Workers Builds, authenticate Wrangler interactively or provide the standard `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` variables. These are Cloudflare CLI credentials, not Latchmail runtime bindings. Grant only the permissions necessary to deploy the Worker and bind the existing resources; runtime D1 initialization does not require the token to execute migrations.
+
+## Deploy
+
+Run:
+
+```bash
+npm ci
+npm run check
+npm run deploy:cloudflare
+```
+
+The command builds the WebUI, generates a temporary deployment manifest under the ignored `.wrangler/` directory, uploads the Worker and runtime Secrets, then removes both temporary files. There is no committed Wrangler configuration to customize.
+
+Request `/healthz` after deployment. The Worker uses its `DB` binding to create or upgrade the schema transactionally and returns `database: ready` only after all bundled numbered migrations are present. Never rewrite an applied migration; add the next numbered SQL file and register it in the Worker migration list. The test suite rejects an unregistered migration.
+
+Staging requires separate Worker, D1 and R2 resources and a separate set of environment values. Do not share production mail data with previews. Keep `SESSION_SECRET` stable to preserve browser sessions; rotating it invalidates every session. Updating `ADMIN_PASSWORD` changes future logins, while `ADMIN_API_TOKEN` can be rotated independently.
+
+## Rollout and rollback
+
+Migrations must remain compatible with the previous Worker version during rollout. The runtime migration engine applies each numbered file and its ledger record in one D1 transaction. A failed migration is rolled back and retried on a later invocation; partial or conflicting first-version schemas fail closed.
+
+After `/healthz` succeeds, verify password login, Cookie/CSRF writes, optional Bearer access, private downloads, Cron and a controlled Webhook. Only then attach Email Routing. Preserve existing MX records unless replacement is intentional.
+
+Cloud account, DNS and real-email validation are `MANUAL_PENDING` when authorized credentials are unavailable.

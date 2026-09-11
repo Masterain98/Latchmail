@@ -9,3 +9,5 @@ Implemented groups: `auth/login|logout|session`; CRUD for `domains`, `tags`, and
 List filters: `cursor`, `limit`, `domain_id`, `tag_id`, `recipient`, `registered`, `untagged`, `unread`, `archived`, `webhook_status`, `q`. Default limit is 50 and maximum is 100. Search is a bounded parameterized `instr()` query over D1 metadata and current registration information; it never downloads R2 bodies.
 
 Expected status codes are 400 validation, 401 authentication, 403 CSRF/origin, 404 missing, 409 conflict, 410 expired content and 429 login rate limit. Sensitive responses are `Cache-Control: private, no-store`.
+
+`GET /healthz` is unauthenticated and initializes or upgrades the bound D1 database before responding. It returns `200 { "status": "ok", "database": "ready" }` when the schema is ready, or `503 { "status": "unavailable", "database": "migration_failed" }` when initialization cannot complete.

@@ -1,9 +1,11 @@
 import { defineConfig } from "vitest/config";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
+import { sqlTextPlugin } from "./tests/sql-text-plugin.ts";
 
 const migrations = await readD1Migrations("./migrations");
 export default defineConfig({
   plugins: [
+    sqlTextPlugin(),
     cloudflareTest({
       main: "./src/worker/index.ts",
       miniflare: {
@@ -16,7 +18,18 @@ export default defineConfig({
           APP_ORIGIN: "https://inbox.test",
           ENVIRONMENT: "test",
         },
-        d1Databases: ["DB"],
+        d1Databases: [
+          "DB",
+          "MIGRATION_DB",
+          "BASELINE_DB",
+          "PARTIAL_DB",
+          "RETRY_DB",
+          "FETCH_DB",
+          "EMAIL_DB",
+          "SCHEDULED_DB",
+          "CORRUPT_DB",
+          "CONFLICT_DB",
+        ],
         r2Buckets: ["MAIL_STORAGE"],
         serviceBindings: { ASSETS: () => new Response("asset") },
       },

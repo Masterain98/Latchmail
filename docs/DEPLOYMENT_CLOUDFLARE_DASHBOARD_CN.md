@@ -1,187 +1,88 @@
 [English](DEPLOYMENT_CLOUDFLARE_DASHBOARD.md) · [简体中文](DEPLOYMENT_CLOUDFLARE_DASHBOARD_CN.md)
 
-# 通过 Cloudflare 网页控制台部署 Latchmail
+# 使用 Cloudflare 网页控制台部署
 
-本文面向不在本地运行 Wrangler 部署命令、而是通过 Cloudflare 网页控制台和 Git 仓库完成部署的场景。推荐使用 Cloudflare Workers Builds 从 GitHub 自动构建；数据库、R2、Secrets、域名和 Email Routing 均在控制台配置。
+本指南通过 Cloudflare Workers Builds 从 Git 仓库部署 Latchmail。用户不需要修改仓库文件，不需要向 D1 手工粘贴 SQL，也不需要传统数据库连接字符串。
 
-官方参考：[Workers Dashboard 入门](https://developers.cloudflare.com/workers/get-started/dashboard/) · [Workers Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [D1 入门](https://developers.cloudflare.com/d1/get-started/) · [Workers 版本与部署](https://developers.cloudflare.com/workers/versions-and-deployments/)
+## 1. 创建存储资源
 
-## 1. 部署前准备
+在 **Storage & Databases → D1** 创建数据库，并记录其名称和 UUID。在 **R2 Object Storage** 创建私有 bucket，并记录名称。请根据账户实际情况命名；`latchmail-db` 和 `latchmail-mail` 仅是示例。两个资源不必同名，也不强制包含 `production`。
 
-确认仓库包含以下内容：
+不要启用公开 `r2.dev` 地址。原始 EML、不可变结构化 payload 和附件必须保持私有。
 
-- `wrangler.jsonc`
-- `migrations/0001_initial.sql`
-- `src/worker/index.ts`
-- `src/web/`
-- `package.json` 和 `package-lock.json`
+如需独立 staging，请分别创建 Worker、D1 和 R2。staging 与 production 不得共用存储资源。
 
-生产环境建议使用以下资源名称：
+## 2. 连接仓库
 
-| 资源 | 建议名称 | 用途 |
+1. 打开 **Workers & Pages**，新建或选择承载 Latchmail 的 Worker，在 **Settings → Builds** 中连接 Git 仓库。
+2. 选择正式分支。默认关闭非正式分支部署，避免预览代码访问生产邮件或 Secrets。
+3. 构建命令留空，部署命令填写：
+
+   ```text
+   npm run deploy:cloudflare
+   ```
+
+Cloudflare 会通过 `WRANGLER_CI_OVERRIDE_NAME` 提供已连接的 Worker 名称。部署脚本会创建被忽略的临时清单、上传 Worker，并在结束后删除清单；因此不会触发 Cloudflare 无配置自动生成配置文件或配置 PR。
+
+## 3. 添加构建变量
+
+在 **Settings → Builds → Variables and secrets** 中添加以下普通构建变量：
+
+| 名称 | 是否必需 | 内容 |
 | --- | --- | --- |
-| Worker | `latchmail` | 生产 Worker |
-| D1 | `latchmail-production` | 邮件索引、设置和任务状态 |
-| R2 | `latchmail-production` | 原始 EML、解析 payload 和附件 |
+| `LATCHMAIL_D1_DATABASE_NAME` | 是 | 上一步创建的 D1 数据库准确名称 |
+| `LATCHMAIL_D1_DATABASE_ID` | 是 | D1 概览页显示的 UUID |
+| `LATCHMAIL_R2_BUCKET_NAME` | 是 | 私有 R2 bucket 的准确名称 |
+| `APP_ORIGIN` | 是 | 对外访问所用的准确 HTTPS Origin，不含路径和结尾 `/` |
+| `ENVIRONMENT` | 否 | 运维环境标签，默认 `production` |
+| `LATCHMAIL_WORKER_NAME` | Workers Builds 中不需要 | 仅在 Cloudflare 没有提供 `WRANGLER_CI_OVERRIDE_NAME` 时使用 |
 
-staging 使用独立的 Worker、D1 和 R2，不要与生产环境共享数据。
+`APP_ORIGIN` 必须与浏览器 Origin 完全一致，例如 `https://mail.example.com` 或分配到的 `workers.dev` Origin。它不能包含路径、查询、片段或结尾 `/`，因为登录后的写操作会精确比较该值。
 
-## 2. 在控制台创建 D1 和 R2
+D1 名称和 ID 是绑定标识，不是凭据。程序通过 `DB` 绑定访问 D1；不需要配置主机、端口、用户名、密码或连接 URL。
 
-### 创建 D1
+## 4. 添加加密构建 Secrets
 
-1. 打开 Cloudflare Dashboard → **Storage & Databases → D1**。
-2. 选择 **Create database**，名称填写 `latchmail-production`。
-3. 打开数据库详情，复制 Database ID。
-4. 将这个 ID 写入仓库 `wrangler.jsonc` 的 production `database_id`。
-5. 将修改提交到 Git 仓库。不要把 D1 数据库 ID 与 Secret 混淆；ID 可以公开，Secret 不可以。
+在同一 Builds 设置中将以下内容保存为加密构建 Secret。它们只对可信构建可见，并在部署时同步为 Worker 运行时 Secret。
 
-### 创建 R2
+| 名称 | 是否必需 | 要求 |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | 是 | 独立生成的 32～4096 字符高熵值 |
+| `SESSION_SECRET` | 是 | 与管理员密码不同的 32～4096 字符高熵值 |
+| `ADMIN_API_TOKEN` | 否 | 独立的 32～4096 字符 Bearer 凭据；新部署不配置时禁用 Bearer 访问 |
+| `WEBHOOK_SIGNING_SECRET` | 仅启用 Webhook 时 | 正好 32 个随机字节的标准 Base64 编码 |
 
-1. 打开 **R2 Object Storage**。
-2. 选择 **Create bucket**，名称填写 `latchmail-production`。
-3. 选择合适的存储位置和默认存储类别。
-4. 保持 R2 bucket 私有，不要启用公开 `r2.dev` 访问。
-5. 将 bucket 名称写入 `wrangler.jsonc` 的 production `bucket_name` 并提交。
+不要把管理员密码复用为其他密钥，也不要把这些值设为普通变量。部署脚本可以读取构建 Secret，因此只应连接可信仓库和正式分支。
 
-生产配置中的绑定名称必须保持不变：
+Secret 上传采用增量方式：后续构建中省略可选 Secret 不会删除已经部署的 Secret。如需停用，请在 **Settings → Variables and Secrets** 中删除对应运行时 Secret。
 
-- D1：`DB`
-- R2：`MAIL_STORAGE`
-- 静态资源：`ASSETS`
+## 5. 部署和自动初始化
 
-如果控制台要求手工添加绑定，在 Worker 的 **Settings → Bindings** 中使用以上变量名。绑定名称错误会导致 Worker 构建成功但运行时无法访问数据库或对象存储。
+触发正式构建。命令会在上传前校验所有实例值和 Secret 格式，构建双语 WebUI，绑定已有 D1/R2，加入私有 Assets 绑定与每分钟 Cron，最后删除临时清单和 Secrets 文件。
 
-## 3. 配置正式域名变量
+Worker 通过已经绑定的 D1 自行初始化。第一次 `/healthz`、API、邮件或定时事件会创建迁移账本，识别已经执行的编号迁移，并以事务批次只执行待处理项。新的空数据库会自动获得 `0001_initial.sql`；完整的旧版第一版结构会补记基线；部分或冲突结构会停止运行，而不是被覆盖。
 
-在 `wrangler.jsonc` 的 production 环境中设置真实的同源 HTTPS 地址，例如：
+打开 `/healthz`，应得到 HTTP `200`：
 
-```jsonc
-"vars": {
-  "APP_ORIGIN": "https://inbox.example.com",
-  "ENVIRONMENT": "production"
-}
+```json
+{ "status": "ok", "database": "ready" }
 ```
 
-`APP_ORIGIN` 必须与浏览器地址的 Origin 完全一致，不能带路径，也不要使用末尾 `/`。登录后的写操作会校验这个值。
+若为 HTTP `503` 且 `database` 是 `migration_failed`，表示初始化失败。配置邮件路由前先查看 Worker 日志；不要手工把迁移标记为已执行。
 
-普通变量可以保存在 `wrangler.jsonc`；密码、API Token 和签名密钥不能写入该文件。
+## 6. 域名和 Email Routing
 
-## 4. 在 Cloudflare 控制台设置 Secrets
+为 Worker 使用预期的 `workers.dev` 地址或自定义域名，并确认 Origin 与 `APP_ORIGIN` 完全一致。健康检查成功后再配置 Cloudflare Email Routing，把 catch-all 路由到该 Email Worker。除非确实要替换原服务，否则不要覆盖现有 MX。
 
-1. 打开 **Workers & Pages**。
-2. 选择 `latchmail` Worker。
-3. 进入 **Settings → Variables and Secrets**。
-4. 选择 **Add**，类型选择 **Secret**。
-5. 添加以下 Secret：
+使用 `ADMIN_PASSWORD` 登录后，在 Latchmail 中新增并启用各收件域名。启用域名下的未知地址仍可收件；地址登记只添加标签和备注。
 
-| 名称 | 必需 | 规则 |
-| --- | --- | --- |
-| `ADMIN_PASSWORD` | 是 | 至少 32 个字符，使用高熵随机值 |
-| `SESSION_SECRET` | 是 | 与管理员密码独立的高熵随机值 |
-| `ADMIN_API_TOKEN` | 否 | 需要自动化 Bearer API 时配置独立 Token |
-| `WEBHOOK_SIGNING_SECRET` | 启用 Webhook 时 | 标准 Base64，正好编码 32 个随机字节 |
+## 7. 验收清单
 
-保存后点击 **Deploy**，让 Secret 绑定进入 Worker 版本。Secret 的值在 Worker 运行时通过 `env.ADMIN_PASSWORD` 等名称读取，但不会显示在代码仓库或控制台列表中。
+- `/healthz` 返回 `database: ready`，D1 的 `d1_migrations` 中存在 `0001_initial.sql`。
+- 密码登录、刷新保持会话、退出和 CSRF 写操作正常。
+- `ADMIN_PASSWORD` 作为 Bearer Token 会被拒绝；可选 `ADMIN_API_TOKEN` 仅在配置后有效。
+- R2 没有公开端点，原始邮件和附件下载必须鉴权。
+- 向启用域名的未登记地址发送受控测试邮件后，WebUI 能显示邮件。
+- Cron 维护以及启用后的签名 Webhook 能正常完成。
 
-如果使用 staging，必须在 `latchmail-staging` Worker 上重复设置一套独立 Secrets。不要在 staging 和 production 之间复用会话密钥或管理员密码。
-
-## 5. 初始化 D1 数据库
-
-网页控制台可以直接执行 SQL：
-
-1. 打开 **Storage & Databases → D1 → `latchmail-production`**。
-2. 进入 **Console / SQL**。
-3. 打开仓库中的 [`migrations/0001_initial.sql`](../migrations/0001_initial.sql)。
-4. 将完整 SQL 粘贴到 D1 Console，执行一次。
-5. 确认 `app_settings` 表存在，并且只有一行 `singleton=1`。
-
-不要重复执行同一份初始化 SQL。它会创建表和索引；D1/R2 数据不属于 Worker 版本回滚范围。以后新增迁移时，必须按新的编号单独执行，并记录执行时间和目标数据库。
-
-## 6. 使用 Workers Builds 从 Git 部署
-
-1. 打开 **Workers & Pages → Create application**。
-2. 选择 **Import an existing Git repository**，授权并选择 Latchmail 仓库。
-3. 生产 Worker 名称填写 `latchmail`。
-4. 构建设置使用：
-
-   - Build command：`npm ci && npm run build`
-   - Deploy command：`npx wrangler deploy --env production`
-   - Root directory：仓库根目录
-   - Node.js：22 或更高版本
-
-5. 确认构建使用仓库内的 `wrangler.jsonc`，并且 production 的 D1 ID、R2 bucket 名称和 `APP_ORIGIN` 已经是正式值。
-6. 选择 **Save and Deploy**。
-7. 在 Worker 的 **Deployments → Version history** 中确认新版本已部署到 100% 流量。
-
-不要在构建命令中打印 Secret，也不要把 Secret 放进 GitHub Actions、普通 `vars` 或前端构建变量。Cloudflare 文档说明，Secrets 会以加密环境绑定的形式提供给 Worker。
-
-如果团队不使用 Workers Builds，也可以在 Worker 的 **Edit Code** 中部署，但本项目包含 Vite 构建产物、D1/R2 绑定和静态资源，建议使用 Git 构建以保证构建结果可重复。
-
-## 7. 配置自定义域名和 Email Routing
-
-### 自定义域名
-
-1. 打开 `latchmail` Worker → **Settings → Domains & Routes**。
-2. 添加正式自定义域名，例如 `inbox.example.com`。
-3. 确认该域名与 `APP_ORIGIN` 完全一致。
-4. 等待 TLS 状态正常后再测试登录。
-
-### Email Routing Catch-all
-
-1. 打开对应域名 → **Email Routing**。
-2. 确认域名已经启用 Email Routing。
-3. 创建或编辑 Catch-all 规则。
-4. 动作选择 **Send to a Worker**，目标选择 `latchmail`。
-5. 确认没有意外覆盖现有的 MX 或更高优先级的特定地址规则。
-6. 回到 Latchmail WebUI，在设置页添加并启用同一个域名。
-
-## 8. 首次部署验证
-
-按以下顺序验证：
-
-1. 访问 `https://inbox.example.com/healthz`，应返回 HTTP 200 和 `{"status":"ok"}`。
-2. 打开 WebUI，输入 `ADMIN_PASSWORD`。
-3. 在浏览器 Network 面板确认 `POST /api/auth/login` 返回 200，并设置 `__Host-latchmail-session` Cookie。
-4. 刷新页面，确认仍保持登录；退出后再次访问应回到登录页。
-5. 在 WebUI 添加并启用一个测试域名。
-6. 从外部邮箱向一个已登记地址发送邮件，确认：
-   - Email Routing 将邮件交给 Worker；
-   - WebUI 能看到邮件；
-   - D1 出现消息索引；
-   - R2 出现原始 EML 和解析 payload；
-   - 原始 EML/附件下载需要登录。
-7. 再向同一启用域名下的随机未登记地址发信，确认仍然可以收件。
-8. 如果配置了 Webhook，确认接收端验证签名、原始字节完整性和 `event_id` 幂等。
-9. 如果配置了 `ADMIN_API_TOKEN`，使用该 Token 调用受保护 API；确认 `ADMIN_PASSWORD` 作为 Bearer Token 会被拒绝。
-
-示例：
-
-```bash
-curl -i https://inbox.example.com/healthz
-curl -i https://inbox.example.com/api/domains \
-  -H "Authorization: Bearer <ADMIN_API_TOKEN>"
-```
-
-## 9. 回滚和变更注意事项
-
-- Worker 代码回滚：打开 **Deployments → Version history**，选择已验证的旧版本并重新部署。
-- D1 和 R2 数据不会随 Worker 版本自动回滚。不要在迁移已经执行后直接回滚到不兼容的旧代码。
-- 修改管理员密码：更新 `ADMIN_PASSWORD` Secret 并部署新版本；现有 Cookie 会话仍由 `SESSION_SECRET` 控制。
-- 让所有浏览器会话立即失效：轮换 `SESSION_SECRET`，然后部署。
-- 现有版本从 `ADMIN_TOKEN` 迁移时，先添加新版本需要的 `ADMIN_PASSWORD` 和 `ADMIN_API_TOKEN`，验证新版本成功后再删除旧 Secret。
-- 发生邮件事故时，先暂停 Email Routing 或 Catch-all，保留 D1/R2 数据，再进行代码回滚和端到端验证。
-
-## 10. 控制台部署完成清单
-
-- [ ] D1 `latchmail-production` 已创建并执行初始化 SQL
-- [ ] 私有 R2 bucket 已创建
-- [ ] `DB`、`MAIL_STORAGE`、`ASSETS` 绑定名称正确
-- [ ] production `APP_ORIGIN` 已替换为正式 HTTPS Origin
-- [ ] `ADMIN_PASSWORD` 和 `SESSION_SECRET` 已作为加密 Secret 配置
-- [ ] 可选 `ADMIN_API_TOKEN` / `WEBHOOK_SIGNING_SECRET` 已按需配置
-- [ ] Workers Builds 成功并部署了最新版本
-- [ ] 自定义域名 TLS 正常
-- [ ] Email Routing Catch-all 指向正确 Worker
-- [ ] 登录、刷新、退出和 CSRF 写操作已验证
-- [ ] 已完成真实外部邮件、随机地址、R2/D1 和 Webhook 验收
+在没有授权资源时，Cloudflare 账户、DNS 和真实邮件检查均记为 `MANUAL_PENDING`。

@@ -23,12 +23,10 @@ Requires Node.js 22+.
 ```bash
 npm ci
 copy .dev.vars.example .dev.vars
-npm run db:migrate:local
-npm run build
-npm run dev:worker
+npm run dev
 ```
 
-Set independent `ADMIN_PASSWORD` and `SESSION_SECRET` values in `.dev.vars`. `ADMIN_API_TOKEN` is optional and enables Bearer API access; `WEBHOOK_SIGNING_SECRET` is required only when Webhooks are enabled and must be standard Base64 for exactly 32 random bytes. Open `http://127.0.0.1:8787` in a browser. After adding and enabling `example.com`, submit a synthetic message from another terminal:
+Set independent `ADMIN_PASSWORD` and `SESSION_SECRET` values in `.dev.vars`. `ADMIN_API_TOKEN` is optional and enables Bearer API access; `WEBHOOK_SIGNING_SECRET` is required only when Webhooks are enabled and must be standard Base64 for exactly 32 random bytes. The local Worker uses a generated, ignored deployment manifest and initializes its D1 schema automatically. Open `http://127.0.0.1:8787` in a browser. After adding and enabling `example.com`, submit a synthetic message from another terminal:
 
 ```bash
 npm run email:fixture -- tests/fixtures/attachment.eml sender@example.net asus@example.com
@@ -102,7 +100,15 @@ Any 2xx response succeeds. Network errors, timeouts, 408, 425, 429 and 5xx respo
 
 ## Deployment
 
-`wrangler.jsonc` provides independent local, staging and production Worker/D1/R2 configurations plus a UTC per-minute Cron. Replace the resource IDs and production `APP_ORIGIN`, then add `ADMIN_PASSWORD`, `SESSION_SECRET`, and any optional API/Webhook credentials under Cloudflare **Variables and Secrets** as encrypted Secrets. Use the [Cloudflare dashboard deployment guide](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD.md) for a browser-only workflow, or the [operator deployment guide](docs/DEPLOYMENT.md) for Wrangler. Do not overwrite an existing MX provider unintentionally.
+Latchmail does not commit a Wrangler configuration file and never requires deployment users to edit repository files. Create a D1 database and private R2 bucket with names that suit your account, then configure these Workers Builds variables:
+
+- `LATCHMAIL_D1_DATABASE_NAME`, `LATCHMAIL_D1_DATABASE_ID`, `LATCHMAIL_R2_BUCKET_NAME` and the exact HTTPS `APP_ORIGIN` are required.
+- `ENVIRONMENT` is optional and defaults to `production`; Workers Builds supplies the connected Worker name, while external CLI deployment may set `LATCHMAIL_WORKER_NAME`.
+- Add `ADMIN_PASSWORD` and `SESSION_SECRET` as encrypted build Secrets. `ADMIN_API_TOKEN` and `WEBHOOK_SIGNING_SECRET` remain optional.
+
+Set the Builds deploy command to `npm run deploy:cloudflare`. It validates the values, builds the WebUI, creates an ignored temporary deployment manifest and Secrets file, uploads the Worker, and removes the temporary files. On first access, the Worker uses its D1 binding to apply any pending numbered migrations transactionally; there is no manual SQL step or database connection string. Resource names such as `latchmail-db` and `latchmail-mail` are suggestions only, never required values.
+
+Use the [Cloudflare dashboard deployment guide](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD.md) for the complete browser workflow or the [operator deployment guide](docs/DEPLOYMENT.md) for local CLI deployment. Do not overwrite an existing MX provider unintentionally.
 
 More documentation: [architecture](docs/ARCHITECTURE.md) · [API](docs/API.md) · [WebUI languages](docs/I18N.md) · [brand assets](docs/BRAND_ASSETS.md) · [Webhook](docs/WEBHOOK.md) · [deployment](docs/DEPLOYMENT.md) · [Cloudflare dashboard deployment](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD.md) · [operations](docs/OPERATIONS.md) · [testing](docs/TESTING.md)
 

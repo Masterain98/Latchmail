@@ -9,21 +9,17 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "npm run build && wrangler dev --local",
+    "dev": "npm run build && node scripts/run-local.mjs",
     "dev:web": "vite --host 127.0.0.1",
-    "dev:worker": "wrangler dev --local",
+    "dev:worker": "node scripts/run-local.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
     "build": "vite build",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run test:integration && npm run build && wrangler deploy --dry-run --env=\"\" --outdir .wrangler-dry-run",
-    "db:migrate:local": "wrangler d1 migrations apply latchmail-local --local",
-    "db:migrate:staging": "wrangler d1 migrations apply latchmail-staging --remote --env staging",
-    "db:migrate:production": "wrangler d1 migrations apply latchmail-production --remote --env production",
-    "deploy:staging": "wrangler deploy --env staging",
-    "deploy:production": "wrangler deploy --env production",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run test:integration && npm run build && node scripts/check-wrangler.mjs",
+    "deploy:cloudflare": "npm run build && node scripts/deploy-cloudflare.mjs",
     "email:fixture": "node scripts/send-eml.mjs"
   },
   "dependencies": {

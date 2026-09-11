@@ -6,6 +6,7 @@ import { AppError } from "../shared/errors";
 import { requireAuth } from "./auth/session";
 import { receiveEmail } from "./receive/service";
 import { runMaintenance } from "./maintenance/service";
+import { ensureDatabase } from "./database/initialize";
 
 const app = new Hono<{ Bindings: Env; Variables: { worker: WorkerContext } }>();
 app.use("*", async (c, next) => {
@@ -16,7 +17,23 @@ app.use("*", async (c, next) => {
   if (c.req.path.startsWith("/api/"))
     c.header("Cache-Control", "private, no-store");
 });
-app.get("/healthz", (c) => c.json({ status: "ok" }));
+app.get("/healthz", async (c) => {
+  try {
+    await ensureDatabase(c.env.DB);
+    return c.json({ status: "ok", database: "ready" });
+  } catch (error) {
+    console.error("database_initialization_failed", {
+      requestId: c.get("worker").requestId,
+      name: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
+    return c.json({ status: "unavailable", database: "migration_failed" }, 503);
+  }
+});
+app.use("/api/*", async (c, next) => {
+  await ensureDatabase(c.env.DB);
+  return next();
+});
 app.use("/api/*", async (c, next) => {
   if (c.req.path === "/api/auth/login") return next();
   return requireAuth(c, next);
@@ -86,11 +103,20 @@ app.onError((error, c) => {
 
 export default {
   fetch: app.fetch,
-  email: (message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) =>
-    receiveEmail(message, env, ctx),
+  email: async (
+    message: ForwardableEmailMessage,
+    env: Env,
+    ctx: ExecutionContext,
+  ) => {
+    await ensureDatabase(env.DB);
+    return receiveEmail(message, env, ctx);
+  },
   scheduled: (
     _controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext,
-  ) => ctx.waitUntil(runMaintenance(env)),
+  ) =>
+    ctx.waitUntil(
+      ensureDatabase(env.DB).then(() => runMaintenance(env)),
+    ),
 } satisfies ExportedHandler<Env>;

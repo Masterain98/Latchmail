@@ -23,12 +23,10 @@ Latchmail 是一个部署在 Cloudflare 上的单管理员、仅收件 Catch-all
 ```bash
 npm ci
 copy .dev.vars.example .dev.vars
-npm run db:migrate:local
-npm run build
-npm run dev:worker
+npm run dev
 ```
 
-在 `.dev.vars` 中设置相互独立的 `ADMIN_PASSWORD` 和 `SESSION_SECRET`。`ADMIN_API_TOKEN` 是可选的，用于启用 Bearer API 鉴权；仅在启用 Webhook 时才需要 `WEBHOOK_SIGNING_SECRET`，其值必须是恰好 32 个随机字节的标准 Base64。浏览器打开 `http://127.0.0.1:8787`。新增并启用 `example.com` 后，可在另一个终端提交合成邮件：
+在 `.dev.vars` 中设置相互独立的 `ADMIN_PASSWORD` 和 `SESSION_SECRET`。`ADMIN_API_TOKEN` 是可选的，用于启用 Bearer API 鉴权；仅在启用 Webhook 时才需要 `WEBHOOK_SIGNING_SECRET`，其值必须是恰好 32 个随机字节的标准 Base64。本地 Worker 使用自动生成且被忽略的部署清单，并自动初始化 D1 结构。浏览器打开 `http://127.0.0.1:8787`。新增并启用 `example.com` 后，可在另一个终端提交合成邮件：
 
 ```bash
 npm run email:fixture -- tests/fixtures/attachment.eml sender@example.net asus@example.com
@@ -102,7 +100,15 @@ Latchmail 发送完整邮件 Webhook 时使用一次 `POST multipart/form-data`�
 
 ## 部署
 
-`wrangler.jsonc` 提供彼此独立的 local、staging、production Worker/D1/R2 配置和一个 UTC 每分钟 Cron。先替换资源 ID 与正式 `APP_ORIGIN`，再在 Cloudflare **Variables and Secrets** 中将 `ADMIN_PASSWORD`、`SESSION_SECRET` 及可选的 API/Webhook 凭据保存为加密 Secret。仅用浏览器部署时请参阅 [Cloudflare 网页控制台部署指南](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD_CN.md)，使用 Wrangler 时参阅 [运维部署指南](docs/DEPLOYMENT_CN.md)。不要覆盖仍在使用的现有 MX。
+Latchmail 不提交 Wrangler 配置文件，也不要求部署用户修改仓库文件。先在自己的账户中创建任意合适名称的 D1 数据库和私有 R2 bucket，再配置以下 Workers Builds 变量：
+
+- 必需填写 `LATCHMAIL_D1_DATABASE_NAME`、`LATCHMAIL_D1_DATABASE_ID`、`LATCHMAIL_R2_BUCKET_NAME` 和精确的 HTTPS `APP_ORIGIN`。
+- `ENVIRONMENT` 可选，默认 `production`；Workers Builds 会提供所连接的 Worker 名称，外部 CLI 部署时也可以设置 `LATCHMAIL_WORKER_NAME`。
+- 将 `ADMIN_PASSWORD` 和 `SESSION_SECRET` 保存为加密构建 Secret；`ADMIN_API_TOKEN` 与 `WEBHOOK_SIGNING_SECRET` 仍为可选项。
+
+将 Builds 的部署命令设置为 `npm run deploy:cloudflare`。该命令会校验变量、构建 WebUI、生成被忽略的临时部署清单和 Secrets 文件、上传 Worker，并删除临时文件。首次访问时，Worker 通过 D1 绑定以事务方式应用尚未执行的编号迁移；不需要手动执行 SQL，也不存在传统数据库连接字符串。`latchmail-db`、`latchmail-mail` 等资源名仅是建议示例，并非强制值。
+
+完整网页操作请参阅 [Cloudflare 网页控制台部署指南](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD_CN.md)，本地 CLI 部署请参阅 [运维部署指南](docs/DEPLOYMENT_CN.md)。不要覆盖仍在使用的现有 MX。
 
 详细资料：[架构](docs/ARCHITECTURE_CN.md) · [API](docs/API_CN.md) · [WebUI 多语言](docs/I18N_CN.md) · [品牌素材](docs/BRAND_ASSETS_CN.md) · [Webhook](docs/WEBHOOK_CN.md) · [部署](docs/DEPLOYMENT_CN.md) · [Cloudflare 网页控制台部署](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD_CN.md) · [运维](docs/OPERATIONS_CN.md) · [测试](docs/TESTING_CN.md)
 
