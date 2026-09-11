@@ -1,6 +1,8 @@
 import {
   useCallback,
   useEffect,
+  useId,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -194,6 +196,122 @@ function Field({
       {children}
       {hint && <small>{hint}</small>}
     </label>
+  );
+}
+
+type SelectOption = { value: string; label: string };
+function SelectField({
+  name,
+  options,
+  value,
+  defaultValue,
+  className = "",
+  required = false,
+  ariaLabel,
+  onChange,
+}: {
+  name?: string;
+  options: SelectOption[];
+  value?: string;
+  defaultValue?: string;
+  className?: string;
+  required?: boolean;
+  ariaLabel?: string;
+  onChange?: (value: string) => void;
+}) {
+  const id = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [internalValue, setInternalValue] = useState(
+    defaultValue ?? options[0]?.value ?? "",
+  );
+  const selectedValue = value ?? internalValue;
+  const selected = options.find((option) => option.value === selectedValue);
+
+  useEffect(() => {
+    if (value !== undefined || options.length === 0) return;
+    if (options.some((option) => option.value === internalValue)) return;
+    const first = options[0];
+    if (first) setInternalValue(defaultValue ?? first.value);
+  }, [defaultValue, internalValue, options, value]);
+
+  useEffect(() => {
+    function closeOnOutside(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
+  function choose(nextValue: string) {
+    if (value === undefined) setInternalValue(nextValue);
+    onChange?.(nextValue);
+    setOpen(false);
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      className={`select-control ${className}`.trim()}
+    >
+      <select
+        className="custom-select-native"
+        name={name}
+        value={selectedValue}
+        onChange={(event) => choose(event.target.value)}
+        required={required}
+        tabIndex={-1}
+        aria-hidden="true"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className="select-trigger"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+      >
+        <span>{selected?.label ?? "—"}</span>
+        <span className="select-chevron" aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="select-menu" id={id} role="listbox" aria-label={ariaLabel}>
+          {options.map((option) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={option.value === selectedValue}
+              className={option.value === selectedValue ? "selected" : ""}
+              key={option.value}
+              onClick={() => choose(option.value)}
+            >
+              <span>{option.label}</span>
+              {option.value === selectedValue && <CheckCircle weight="fill" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -836,27 +954,27 @@ function AddressesPage() {
                     <strong>{a.address_normalized}</strong>
                   </td>
                   <td>
-                    <select
+                    <SelectField
                       className="table-select"
-                      aria-label={t("修改 {{address}} 的标签", { address: a.address_normalized })}
+                      ariaLabel={t("修改 {{address}} 的标签", { address: a.address_normalized })}
                       value={a.tag_id ?? ""}
-                      onChange={async (event) => {
+                      options={[
+                        { value: "", label: t("未打标签") },
+                        ...(tags.data?.map((tag) => ({
+                          value: tag.id,
+                          label: tag.name,
+                        })) ?? []),
+                      ]}
+                      onChange={async (nextValue) => {
                         await request(`/addresses/${a.id}`, {
                           method: "PATCH",
                           body: JSON.stringify({
-                            tag_id: event.target.value || null,
+                            tag_id: nextValue || null,
                           }),
                         });
                         void addresses.refresh();
                       }}
-                    >
-                      <option value="">{t("未打标签")}</option>
-                      {tags.data?.map((tag) => (
-                        <option key={tag.id} value={tag.id}>
-                          {tag.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </td>
                   <td>
                     <button
@@ -909,17 +1027,17 @@ function AddressesPage() {
         <Modal title={t("登记完整地址")} onClose={() => setOpen(false)}>
           <form className="stack" onSubmit={create}>
             <Field label={t("域名")}>
-              <select
+              <SelectField
                 name="domain_id"
                 required
                 defaultValue={defaultDomain?.id ?? domains.data?.[0]?.id}
-              >
-                {domains.data?.map((d) => (
-                  <option value={d.id} key={d.id}>
-                    {d.domain_ascii}
-                  </option>
-                ))}
-              </select>
+                options={
+                  domains.data?.map((d) => ({
+                    value: d.id,
+                    label: d.domain_ascii,
+                  })) ?? []
+                }
+              />
             </Field>
             <Field
               label="Local-part"
@@ -932,14 +1050,16 @@ function AddressesPage() {
               />
             </Field>
             <Field label={t("标签")}>
-              <select name="tag_id">
-                <option value="">{t("不选择标签")}</option>
-                {tags.data?.map((t) => (
-                  <option value={t.id} key={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+              <SelectField
+                name="tag_id"
+                options={[
+                  { value: "", label: t("不选择标签") },
+                  ...(tags.data?.map((tag) => ({
+                    value: tag.id,
+                    label: tag.name,
+                  })) ?? []),
+                ]}
+              />
             </Field>
             <Field label={t("备注")}>
               <textarea name="note" maxLength={2000} />
