@@ -10,6 +10,7 @@ test("switches between English and Chinese and persists the choice", async ({
   await page.goto("/");
   await expect(page).toHaveTitle("Latchmail");
   await expect(page.getByRole("heading", { name: "Your mail console" })).toBeVisible();
+  await expect(page.getByLabel("Admin password")).toBeVisible();
   await page.getByRole("button", { name: "Switch language" }).click();
   await expect(page.getByRole("heading", { name: "你的收件台" })).toBeVisible();
   await page.reload();

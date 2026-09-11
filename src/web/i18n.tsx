@@ -47,7 +47,7 @@ const english: Record<string, string> = {
   "你的收件台": "Your mail console",
   "只接收、可靠保存，再把完整邮件交给你的处理服务。":
     "Receive only, store reliably, then deliver the complete message to your processing service.",
-  "管理员口令": "Admin token",
+  "管理员密码": "Admin password",
   "正在验证…": "Verifying…",
   "进入收件箱": "Open inbox",
   "会话保存在安全的 HttpOnly Cookie 中，不写入浏览器存储。":
@@ -195,7 +195,7 @@ const english: Record<string, string> = {
   "正在建立安全会话…": "Establishing a secure session…",
   "请先登录。": "Please sign in first.",
   "登录尝试过多，请稍后再试。": "Too many sign-in attempts. Try again later.",
-  "管理员口令不正确。": "The admin token is incorrect.",
+  "管理员密码不正确。": "The admin password is incorrect.",
   "邮箱地址格式无效。": "The email address format is invalid.",
   "Envelope 收件地址格式无效。": "The envelope recipient address is invalid.",
   "请先解除地址对该标签的引用。":

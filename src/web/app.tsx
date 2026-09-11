@@ -199,7 +199,7 @@ function Field({
 
 function Login({ onLogin }: { onLogin: () => void }) {
   const { t } = useI18n();
-  const [token, setToken] = useState(""),
+  const [password, setPassword] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   async function submit(e: FormEvent) {
@@ -209,7 +209,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
     try {
       const result = await request<{ csrf: string }>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ password }),
       });
       setCsrf(result.csrf);
       onLogin();
@@ -239,18 +239,21 @@ function Login({ onLogin }: { onLogin: () => void }) {
             tabIndex={-1}
             aria-hidden="true"
           />
-          <Field label={t("管理员口令")}>
+          <Field label={t("管理员密码")}>
             <input
               type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               autoFocus
               autoComplete="current-password"
               minLength={32}
             />
           </Field>
           <ErrorNotice message={error} />
-          <button className="primary wide" disabled={busy || token.length < 32}>
+          <button
+            className="primary wide"
+            disabled={busy || password.length < 32}
+          >
             {busy ? t("正在验证…") : t("进入收件箱")}
           </button>
         </form>

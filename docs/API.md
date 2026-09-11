@@ -1,6 +1,8 @@
+[English](API.md) · [简体中文](API_CN.md)
+
 # Management API
 
-All business routes use `/api`, JSON success `{ "data": ... }`, and structured errors `{ "error": { "code", "message", "request_id" } }`. Browser calls use a signed `__Host-` HttpOnly cookie plus Origin and `X-CSRF-Token` on writes. Automation may use `Authorization: Bearer <ADMIN_TOKEN>`.
+All business routes use `/api`, JSON success `{ "data": ... }`, and structured errors `{ "error": { "code", "message", "request_id" } }`. Browser calls use `POST /api/auth/login` with `{ "password": "<ADMIN_PASSWORD>" }`, followed by a signed `__Host-` HttpOnly cookie plus Origin and `X-CSRF-Token` on writes. Automation may use `Authorization: Bearer <ADMIN_API_TOKEN>` when that independent optional Secret is configured. The administrator password is never accepted as a Bearer credential.
 
 Implemented groups: `auth/login|logout|session`; CRUD for `domains`, `tags`, and `addresses`; cursor-list/detail/PATCH/DELETE plus raw download for `messages`; attachment download; retention `settings`; webhook get/put/test, delivery list/detail/retry/cancel and per-message enqueue; system status and bounded maintenance. `GET` never marks a message read.
 

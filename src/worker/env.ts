@@ -2,7 +2,8 @@ export interface Env {
   DB: D1Database;
   MAIL_STORAGE: R2Bucket;
   ASSETS: Fetcher;
-  ADMIN_TOKEN: string;
+  ADMIN_PASSWORD: string;
+  ADMIN_API_TOKEN?: string;
   SESSION_SECRET: string;
   WEBHOOK_SIGNING_SECRET?: string;
   APP_ORIGIN: string;

@@ -8,7 +8,8 @@ export default defineConfig({
       main: "./src/worker/index.ts",
       miniflare: {
         bindings: {
-          ADMIN_TOKEN: "admin-token-with-at-least-thirty-two-bytes",
+          ADMIN_PASSWORD: "admin-password-with-at-least-thirty-two-bytes",
+          ADMIN_API_TOKEN: "independent-api-token-with-at-least-thirty-two-bytes",
           SESSION_SECRET: "session-secret-with-at-least-thirty-two-bytes",
           WEBHOOK_SIGNING_SECRET:
             "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",

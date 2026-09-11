@@ -1,3 +1,5 @@
+[English](WEBHOOK.md) · [简体中文](WEBHOOK_CN.md)
+
 # Webhook protocol 1.0
 
 Every request is `POST multipart/form-data` with exactly `payload` (`application/json; charset=utf-8`) and `raw_email` (`message/rfc822`). The JSON bytes and EML bytes are immutable across retries; only the random boundary, timestamp and signature change. Attachments are already contained in the EML and are not duplicated as extra parts.

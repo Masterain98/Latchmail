@@ -1,3 +1,6 @@
-ADMIN_TOKEN="generate-at-least-32-random-bytes"
+ADMIN_PASSWORD="generate-at-least-32-random-bytes"
+# Optional: omit this line to disable Bearer API access.
+ADMIN_API_TOKEN="optional-independent-api-token-with-at-least-32-random-bytes"
 SESSION_SECRET="generate-an-independent-32-byte-secret"
+# Required only when Webhooks are enabled.
 WEBHOOK_SIGNING_SECRET="base64-of-exactly-32-random-bytes"

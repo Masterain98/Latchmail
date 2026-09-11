@@ -1,3 +1,5 @@
+[English](ARCHITECTURE.md) · [简体中文](ARCHITECTURE_CN.md)
+
 # Architecture
 
 One Module Worker exports `fetch`, `email` and `scheduled`. The React/Vite SPA is deployed as Workers Static Assets; `/api/*`, `/healthz` and the local email simulation path run Worker-first. D1 owns bounded indexes, current relationships, leases and task state. The private R2 bucket owns `raw/`, immutable `content/` payloads and decoded `attachments/`.

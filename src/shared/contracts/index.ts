@@ -49,7 +49,7 @@ export const webhookPutSchema = z
   })
   .strict();
 export const loginSchema = z
-  .object({ token: z.string().min(32).max(4096) })
+  .object({ password: z.string().min(32).max(4096) })
   .strict();
 
 export const parseStates = ["queued", "processing", "ready", "failed"] as const;

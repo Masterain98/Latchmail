@@ -86,9 +86,10 @@ async function verifyBearer(
 ): Promise<boolean> {
   if (!header?.startsWith("Bearer ")) return false;
   const supplied = header.slice(7);
+  if (!env.ADMIN_API_TOKEN || supplied.length > 4096) return false;
   const [a, b] = await Promise.all([
     sha256(new TextEncoder().encode(supplied)),
-    sha256(new TextEncoder().encode(env.ADMIN_TOKEN)),
+    sha256(new TextEncoder().encode(env.ADMIN_API_TOKEN)),
   ]);
   return timingSafeEqual(a, b);
 }

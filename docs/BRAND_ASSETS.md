@@ -1,3 +1,5 @@
+[English](BRAND_ASSETS.md) · [简体中文](BRAND_ASSETS_CN.md)
+
 # Latchmail brand assets
 
 The supplied brand images live under `src/web/assets/brand/` with stable, role-based names:

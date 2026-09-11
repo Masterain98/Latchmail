@@ -31,8 +31,8 @@ export async function login(c: ApiContext): Promise<Response> {
     throw new AppError(429, "RATE_LIMITED", "登录尝试过多，请稍后再试。");
   const body = loginSchema.parse(await c.req.json());
   const [provided, expected] = await Promise.all([
-    sha256(new TextEncoder().encode(body.token)),
-    sha256(new TextEncoder().encode(c.env.ADMIN_TOKEN)),
+    sha256(new TextEncoder().encode(body.password)),
+    sha256(new TextEncoder().encode(c.env.ADMIN_PASSWORD)),
   ]);
   if (!timingSafeEqual(provided, expected)) {
     const started = Math.floor(now / windowMs) * windowMs;
@@ -41,7 +41,7 @@ export async function login(c: ApiContext): Promise<Response> {
     )
       .bind(bucket, started, started + windowMs)
       .run();
-    throw new AppError(401, "UNAUTHORIZED", "管理员口令不正确。");
+    throw new AppError(401, "UNAUTHORIZED", "管理员密码不正确。");
   }
   await c.env.DB.prepare("DELETE FROM auth_rate_limits WHERE bucket_key=?")
     .bind(bucket)

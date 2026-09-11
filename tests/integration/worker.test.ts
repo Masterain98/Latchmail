@@ -55,7 +55,7 @@ function email(to: string, raw = fixture): ForwardableEmailMessage {
 beforeEach(clear);
 
 describe("worker vertical path", () => {
-  it("protects APIs and accepts a valid bearer token", async () => {
+  it("protects APIs and accepts only the independent bearer token", async () => {
     const denied = await worker.fetch!(
       new Request("https://inbox.test/api/domains"),
       env,
@@ -65,20 +65,195 @@ describe("worker vertical path", () => {
     const allowed = await worker.fetch!(
       new Request("https://inbox.test/api/domains", {
         headers: {
-          Authorization: "Bearer admin-token-with-at-least-thirty-two-bytes",
+          Authorization:
+            "Bearer independent-api-token-with-at-least-thirty-two-bytes",
         },
       }),
       env,
       createExecutionContext(),
     );
     expect(allowed.status).toBe(200);
+
+    for (const credential of [
+      "admin-password-with-at-least-thirty-two-bytes",
+      "incorrect-api-token-with-at-least-thirty-two-bytes",
+    ]) {
+      const rejected = await worker.fetch!(
+        new Request("https://inbox.test/api/domains", {
+          headers: { Authorization: `Bearer ${credential}` },
+        }),
+        env,
+        createExecutionContext(),
+      );
+      expect(rejected.status).toBe(401);
+    }
+
+    const withoutApiToken = new Proxy(env, {
+      get(target, property, receiver) {
+        if (property === "ADMIN_API_TOKEN") return undefined;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const disabled = await worker.fetch!(
+      new Request("https://inbox.test/api/domains", {
+        headers: {
+          Authorization:
+            "Bearer independent-api-token-with-at-least-thirty-two-bytes",
+        },
+      }),
+      withoutApiToken,
+      createExecutionContext(),
+    );
+    expect(disabled.status).toBe(401);
+  });
+
+  it("logs in with a password, creates a secure session and enforces csrf", async () => {
+    const oldField = await worker.fetch!(
+      new Request("https://inbox.test/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: "admin-password-with-at-least-thirty-two-bytes",
+        }),
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(oldField.status).toBe(400);
+
+    const incorrect = await worker.fetch!(
+      new Request("https://inbox.test/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password: "incorrect-password-with-at-least-thirty-two-bytes",
+        }),
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(incorrect.status).toBe(401);
+
+    const login = await worker.fetch!(
+      new Request("https://inbox.test/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password: "admin-password-with-at-least-thirty-two-bytes",
+        }),
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(login.status).toBe(200);
+    const setCookie = login.headers.get("Set-Cookie") ?? "";
+    expect(setCookie).toMatch(/^__Host-latchmail-session=/);
+    expect(setCookie).toMatch(/HttpOnly/i);
+    expect(setCookie).toMatch(/Secure/i);
+    expect(setCookie).toMatch(/SameSite=Strict/i);
+    expect(setCookie).toMatch(/Path=\//i);
+    const loginBody = await login.json<{
+      data: { authenticated: boolean; csrf: string };
+    }>();
+    expect(loginBody.data.authenticated).toBe(true);
+    const cookie = setCookie.split(";", 1)[0]!;
+
+    const session = await worker.fetch!(
+      new Request("https://inbox.test/api/auth/session", {
+        headers: { Cookie: cookie },
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(session.status).toBe(200);
+    await expect(session.json()).resolves.toEqual({
+      data: {
+        authenticated: true,
+        auth_mode: "cookie",
+        csrf: loginBody.data.csrf,
+      },
+    });
+
+    const missingCsrf = await worker.fetch!(
+      new Request("https://inbox.test/api/system/maintenance", {
+        method: "POST",
+        headers: { Cookie: cookie, Origin: "https://inbox.test" },
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(missingCsrf.status).toBe(403);
+
+    const wrongOrigin = await worker.fetch!(
+      new Request("https://inbox.test/api/system/maintenance", {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          Origin: "https://attacker.test",
+          "X-CSRF-Token": loginBody.data.csrf,
+        },
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(wrongOrigin.status).toBe(403);
+
+    const accepted = await worker.fetch!(
+      new Request("https://inbox.test/api/system/maintenance", {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          Origin: "https://inbox.test",
+          "X-CSRF-Token": loginBody.data.csrf,
+        },
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(accepted.status).toBe(200);
+  });
+
+  it("rate limits repeated password failures", async () => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const response = await worker.fetch!(
+        new Request("https://inbox.test/api/auth/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "CF-Connecting-IP": "203.0.113.10",
+          },
+          body: JSON.stringify({
+            password: "incorrect-password-with-at-least-thirty-two-bytes",
+          }),
+        }),
+        env,
+        createExecutionContext(),
+      );
+      expect(response.status).toBe(401);
+    }
+    const limited = await worker.fetch!(
+      new Request("https://inbox.test/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "203.0.113.10",
+        },
+        body: JSON.stringify({
+          password: "admin-password-with-at-least-thirty-two-bytes",
+        }),
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(limited.status).toBe(429);
   });
   it("rejects private webhook destinations before persisting them", async () => {
     const response = await worker.fetch!(
       new Request("https://inbox.test/api/webhook", {
         method: "PUT",
         headers: {
-          Authorization: "Bearer admin-token-with-at-least-thirty-two-bytes",
+          Authorization:
+            "Bearer independent-api-token-with-at-least-thirty-two-bytes",
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -177,7 +352,8 @@ describe("worker vertical path", () => {
     const response = await worker.fetch!(
       new Request("https://inbox.test/api/messages", {
         headers: {
-          Authorization: "Bearer admin-token-with-at-least-thirty-two-bytes",
+          Authorization:
+            "Bearer independent-api-token-with-at-least-thirty-two-bytes",
         },
       }),
       env,

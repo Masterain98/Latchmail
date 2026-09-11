@@ -28,7 +28,7 @@ npm run build
 npm run dev:worker
 ```
 
-在 `.dev.vars` 中提供三个相互独立的密钥；`WEBHOOK_SIGNING_SECRET` 必须是恰好 32 个随机字节的标准 Base64。浏览器打开 `http://127.0.0.1:8787`。新增并启用 `example.com` 后，可在另一个终端提交合成邮件：
+在 `.dev.vars` 中设置相互独立的 `ADMIN_PASSWORD` 和 `SESSION_SECRET`。`ADMIN_API_TOKEN` 是可选的，用于启用 Bearer API 鉴权；仅在启用 Webhook 时才需要 `WEBHOOK_SIGNING_SECRET`，其值必须是恰好 32 个随机字节的标准 Base64。浏览器打开 `http://127.0.0.1:8787`。新增并启用 `example.com` 后，可在另一个终端提交合成邮件：
 
 ```bash
 npm run email:fixture -- tests/fixtures/attachment.eml sender@example.net asus@example.com
@@ -98,12 +98,12 @@ Latchmail 发送完整邮件 Webhook 时使用一次 `POST multipart/form-data`�
 
 请求还带有 `X-Inbox-Event-Id`、`X-Inbox-Delivery-Id`、`X-Inbox-Timestamp`、`X-Inbox-Payload-SHA256` 和 `X-Inbox-Signature: v1,<base64>`。签名输入是 `event_id.delivery_id.timestamp.payload_sha256`，使用配置的 32 字节密钥执行 HMAC-SHA256。接收端应先校验原始 payload 字节、签名、时间窗口和 SHA-256，再解析 JSON，并以 `event_id` 做幂等去重。
 
-任意 2xx 表示成功；网络错误、超时、408、425、429 和 5xx 会重试，其余 4xx 终止自动重试。重试最多 8 次，最长 24 小时或直到原始邮件过期。完整字段和示例接收器见 [Webhook 协议](docs/WEBHOOK.md)。
+任意 2xx 表示成功；网络错误、超时、408、425、429 和 5xx 会重试，其余 4xx 终止自动重试。重试最多 8 次，最长 24 小时或直到原始邮件过期。完整字段和示例接收器见 [Webhook 协议](docs/WEBHOOK_CN.md)。
 
 ## 部署
 
-`wrangler.jsonc` 提供彼此独立的 local、staging、production Worker/D1/R2 配置和一个 UTC 每分钟 Cron。先替换资源 ID 与正式 `APP_ORIGIN`，使用 Cloudflare Secrets 写入密钥，再按 [部署指南](docs/DEPLOYMENT.md) 配置 Email Routing Catch-all。不要覆盖仍在使用的现有 MX。
+`wrangler.jsonc` 提供彼此独立的 local、staging、production Worker/D1/R2 配置和一个 UTC 每分钟 Cron。先替换资源 ID 与正式 `APP_ORIGIN`，再在 Cloudflare **Variables and Secrets** 中将 `ADMIN_PASSWORD`、`SESSION_SECRET` 及可选的 API/Webhook 凭据保存为加密 Secret。仅用浏览器部署时请参阅 [Cloudflare 网页控制台部署指南](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD_CN.md)，使用 Wrangler 时参阅 [运维部署指南](docs/DEPLOYMENT_CN.md)。不要覆盖仍在使用的现有 MX。
 
-详细资料：[架构](docs/ARCHITECTURE.md) · [API](docs/API.md) · [WebUI 多语言](docs/I18N.md) · [品牌素材](docs/BRAND_ASSETS.md) · [Webhook](docs/WEBHOOK.md) · [部署](docs/DEPLOYMENT.md) · [运维](docs/OPERATIONS.md) · [测试](docs/TESTING.md)
+详细资料：[架构](docs/ARCHITECTURE_CN.md) · [API](docs/API_CN.md) · [WebUI 多语言](docs/I18N_CN.md) · [品牌素材](docs/BRAND_ASSETS_CN.md) · [Webhook](docs/WEBHOOK_CN.md) · [部署](docs/DEPLOYMENT_CN.md) · [Cloudflare 网页控制台部署](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD_CN.md) · [运维](docs/OPERATIONS_CN.md) · [测试](docs/TESTING_CN.md)
 
 MIT licensed.

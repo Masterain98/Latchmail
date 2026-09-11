@@ -28,7 +28,7 @@ npm run build
 npm run dev:worker
 ```
 
-Provide three independent secrets in `.dev.vars`; `WEBHOOK_SIGNING_SECRET` must be standard Base64 for exactly 32 random bytes. Open `http://127.0.0.1:8787` in a browser. After adding and enabling `example.com`, submit a synthetic message from another terminal:
+Set independent `ADMIN_PASSWORD` and `SESSION_SECRET` values in `.dev.vars`. `ADMIN_API_TOKEN` is optional and enables Bearer API access; `WEBHOOK_SIGNING_SECRET` is required only when Webhooks are enabled and must be standard Base64 for exactly 32 random bytes. Open `http://127.0.0.1:8787` in a browser. After adding and enabling `example.com`, submit a synthetic message from another terminal:
 
 ```bash
 npm run email:fixture -- tests/fixtures/attachment.eml sender@example.net asus@example.com
@@ -102,8 +102,8 @@ Any 2xx response succeeds. Network errors, timeouts, 408, 425, 429 and 5xx respo
 
 ## Deployment
 
-`wrangler.jsonc` provides independent local, staging and production Worker/D1/R2 configurations plus a UTC per-minute Cron. Replace the resource IDs and production `APP_ORIGIN`, write secrets with Cloudflare Secrets, then follow the [deployment guide](docs/DEPLOYMENT.md) to configure Email Routing Catch-all. Do not overwrite an existing MX provider unintentionally.
+`wrangler.jsonc` provides independent local, staging and production Worker/D1/R2 configurations plus a UTC per-minute Cron. Replace the resource IDs and production `APP_ORIGIN`, then add `ADMIN_PASSWORD`, `SESSION_SECRET`, and any optional API/Webhook credentials under Cloudflare **Variables and Secrets** as encrypted Secrets. Use the [Cloudflare dashboard deployment guide](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD.md) for a browser-only workflow, or the [operator deployment guide](docs/DEPLOYMENT.md) for Wrangler. Do not overwrite an existing MX provider unintentionally.
 
-More documentation: [architecture](docs/ARCHITECTURE.md) · [API](docs/API.md) · [WebUI languages](docs/I18N.md) · [brand assets](docs/BRAND_ASSETS.md) · [Webhook](docs/WEBHOOK.md) · [deployment](docs/DEPLOYMENT.md) · [operations](docs/OPERATIONS.md) · [testing](docs/TESTING.md)
+More documentation: [architecture](docs/ARCHITECTURE.md) · [API](docs/API.md) · [WebUI languages](docs/I18N.md) · [brand assets](docs/BRAND_ASSETS.md) · [Webhook](docs/WEBHOOK.md) · [deployment](docs/DEPLOYMENT.md) · [Cloudflare dashboard deployment](docs/DEPLOYMENT_CLOUDFLARE_DASHBOARD.md) · [operations](docs/OPERATIONS.md) · [testing](docs/TESTING.md)
 
 MIT licensed.
