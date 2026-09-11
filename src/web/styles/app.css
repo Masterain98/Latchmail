@@ -276,14 +276,20 @@ aside {
 }
 .inbox-layout {
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: minmax(190px, 220px) minmax(0, 1fr);
+  gap: 20px;
+  min-height: clamp(460px, calc(100dvh - 270px), 760px);
+  align-items: start;
 }
 .filter-rail {
   position: sticky;
   top: 24px;
   align-self: start;
-  background: transparent;
+  min-height: 100%;
+  padding: 14px 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
   display: grid;
   gap: 3px;
 }
@@ -329,6 +335,12 @@ aside {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 10px;
+}
+.mail-panel {
+  min-height: clamp(460px, calc(100dvh - 270px), 760px);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
 }
 .toolbar {
   padding: 13px;
@@ -472,19 +484,28 @@ aside {
 .empty {
   min-height: 290px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-content: center;
+  justify-items: center;
   text-align: center;
   padding: 40px;
   color: #a09d96;
+}
+.empty svg {
+  justify-self: center;
 }
 .empty h3 {
   color: var(--ink);
   margin: 15px 0 4px;
 }
 .empty p {
-  max-width: 460px;
+  width: min(100%, 460px);
   margin: 0;
   line-height: 1.55;
+}
+.mail-panel > .empty,
+.mail-panel > .loading {
+  flex: 1;
 }
 .loading {
   padding: 70px;
@@ -954,14 +975,36 @@ textarea {
 }
 .settings-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.75fr);
+  grid-template-areas:
+    "domains tags"
+    "domains retention"
+    "webhook webhook"
+    "status status";
   gap: 18px;
+  align-items: start;
 }
 .setting-card {
+  min-width: 0;
   padding: 22px;
 }
-.wide-card {
-  grid-column: 1/-1;
+.settings-domains {
+  grid-area: domains;
+}
+.settings-tags {
+  grid-area: tags;
+}
+.settings-retention {
+  grid-area: retention;
+}
+.settings-webhook {
+  grid-area: webhook;
+}
+.settings-status {
+  grid-area: status;
+}
+.settings-tags .inline-form {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 .section-title {
   display: flex;
@@ -1072,6 +1115,10 @@ textarea {
 .registry-head {
   margin-bottom: 34px;
 }
+.inbox-head,
+.settings-head {
+  margin-bottom: 34px;
+}
 .registry-action {
   white-space: nowrap;
 }
@@ -1150,6 +1197,7 @@ textarea {
   top: 24px;
   display: grid;
   gap: 14px;
+  align-content: start;
 }
 .registry-summary,
 .registry-guide {
@@ -1257,6 +1305,15 @@ textarea {
   .metrics {
     grid-template-columns: repeat(3, 1fr);
   }
+  .settings-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "domains"
+      "tags"
+      "retention"
+      "webhook"
+      "status";
+  }
   .registry-layout {
     grid-template-columns: 1fr;
   }
@@ -1343,6 +1400,10 @@ textarea {
     overflow: auto;
     margin: 0 -16px 12px;
     padding: 0 16px;
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
   .filter-rail strong {
     display: none;
@@ -1389,9 +1450,12 @@ textarea {
   }
   .settings-grid {
     grid-template-columns: 1fr;
-  }
-  .wide-card {
-    grid-column: auto;
+    grid-template-areas:
+      "domains"
+      "tags"
+      "retention"
+      "webhook"
+      "status";
   }
   .section-title {
     display: block;

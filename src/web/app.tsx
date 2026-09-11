@@ -105,13 +105,24 @@ function useAsync<T>(load: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true);
+  const requestVersion = useRef(0);
   const refresh = useCallback(() => {
+    const version = ++requestVersion.current;
     setLoading(true);
     setError("");
     return load()
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "加载失败"))
-      .finally(() => setLoading(false));
+      .then((next) => {
+        if (version === requestVersion.current) setData(next);
+        return next;
+      })
+      .catch((e) => {
+        if (version === requestVersion.current)
+          setError(e instanceof Error ? e.message : "加载失败");
+        return undefined;
+      })
+      .finally(() => {
+        if (version === requestVersion.current) setLoading(false);
+      });
   }, deps);
   useEffect(() => {
     void refresh();
@@ -522,9 +533,29 @@ function InboxPage() {
     else next.delete(key);
     setParams(next);
   }
+  function setView(view: "all" | "unread" | "unregistered" | "untagged") {
+    const next = new URLSearchParams(params);
+    const currentView =
+      params.get("unread") === "true"
+        ? "unread"
+        : params.get("registered") === "false"
+          ? "unregistered"
+          : params.get("untagged") === "true"
+            ? "untagged"
+            : "all";
+    next.delete("unread");
+    next.delete("registered");
+    next.delete("untagged");
+    if (currentView !== view) {
+      if (view === "unread") next.set("unread", "true");
+      if (view === "unregistered") next.set("registered", "false");
+      if (view === "untagged") next.set("untagged", "true");
+    }
+    setParams(next);
+  }
   return (
     <>
-      <header className="page-head">
+      <header className="page-head inbox-head">
         <div>
           <p className="eyebrow">INBOX</p>
           <h1>{t("所有来信")}</h1>
@@ -540,46 +571,31 @@ function InboxPage() {
           <strong>{t("视图")}</strong>
           <button
             className={
-              !params.has("registered") && !params.has("untagged")
+              !params.has("unread") &&
+              !params.has("registered") &&
+              !params.has("untagged")
                 ? "active"
                 : ""
             }
-            onClick={() => {
-              const n = new URLSearchParams(params);
-              n.delete("registered");
-              n.delete("untagged");
-              setParams(n);
-            }}
+            onClick={() => setView("all")}
           >
             {t("全部收件")}
           </button>
           <button
             className={params.get("unread") === "true" ? "active" : ""}
-            onClick={() =>
-              change("unread", params.get("unread") === "true" ? null : "true")
-            }
+            onClick={() => setView("unread")}
           >
             {t("未读")}
           </button>
           <button
             className={params.get("registered") === "false" ? "active" : ""}
-            onClick={() => {
-              const n = new URLSearchParams(params);
-              n.set("registered", "false");
-              n.delete("untagged");
-              setParams(n);
-            }}
+            onClick={() => setView("unregistered")}
           >
             {t("未登记地址")}
           </button>
           <button
             className={params.get("untagged") === "true" ? "active" : ""}
-            onClick={() => {
-              const n = new URLSearchParams(params);
-              n.set("untagged", "true");
-              n.delete("registered");
-              setParams(n);
-            }}
+            onClick={() => setView("untagged")}
           >
             {t("已登记未打标签")}
           </button>
@@ -1255,7 +1271,7 @@ function SettingsPage() {
   }
   return (
     <>
-      <header className="page-head">
+      <header className="page-head settings-head">
         <div>
           <p className="eyebrow">SETTINGS</p>
           <h1>{t("设置与运维")}</h1>
@@ -1283,7 +1299,7 @@ function SettingsPage() {
         }
       />
       <div className="settings-grid">
-        <section className="setting-card wide-card">
+        <section className="setting-card settings-domains">
           <div className="section-title">
             <div>
               <Globe />
@@ -1349,7 +1365,7 @@ function SettingsPage() {
             ))}
           </div>
         </section>
-        <section className="setting-card">
+        <section className="setting-card settings-tags">
           <div className="section-title">
             <div>
               <Tag />
@@ -1414,7 +1430,7 @@ function SettingsPage() {
             ))}
           </div>
         </section>
-        <section className="setting-card">
+        <section className="setting-card settings-retention">
           <div className="section-title">
             <div>
               <Archive />
@@ -1450,7 +1466,7 @@ function SettingsPage() {
             </form>
           )}
         </section>
-        <section className="setting-card wide-card">
+        <section className="setting-card settings-webhook">
           <div className="section-title">
             <div>
               <Bell />
@@ -1538,7 +1554,7 @@ function SettingsPage() {
             </form>
           )}
         </section>
-        <section className="setting-card wide-card">
+        <section className="setting-card settings-status">
           <div className="section-title">
             <div>
               <CheckCircle />
