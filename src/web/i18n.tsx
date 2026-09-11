@@ -117,6 +117,21 @@ const english: Record<string, string> = {
   "人工重投": "Retry now",
   "收件时未创建通知任务。": "No webhook task was created when this message arrived.",
   "保存失败": "Couldn't save the changes.",
+  "已登记地址": "Registered addresses",
+  "整理收件地址": "Organize incoming mail",
+  "搜索地址或备注": "Search addresses or notes",
+  "没有匹配的地址": "No matching addresses",
+  "换一个地址、标签或备注关键词试试。":
+    "Try another address, label, or note keyword.",
+  "登记概览": "Registry overview",
+  "地址整理状态": "Address organization",
+  "全部地址": "All addresses",
+  "已打标签": "Labeled",
+  "最近有收件": "Received recently",
+  "启用域名": "Enabled domains",
+  "登记说明": "How registration works",
+  "删除登记关系只会移除标签和备注，历史邮件仍然保留。":
+    "Removing a registration only removes its label and note; past mail stays available.",
   "地址无需登记即可收件；这里仅保存标签和备注，帮助整理历史与未来邮件。":
     "Addresses receive mail without registration. This registry only stores labels and notes for organizing past and future messages.",
   "登记地址": "Register address",

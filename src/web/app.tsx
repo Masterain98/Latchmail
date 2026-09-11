@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -16,6 +17,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import DOMPurify from "dompurify";
+import { createPortal } from "react-dom";
 import {
   Archive,
   ArrowClockwise,
@@ -221,7 +223,14 @@ function SelectField({
 }) {
   const id = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 0,
+  });
   const [internalValue, setInternalValue] = useState(
     defaultValue ?? options[0]?.value ?? "",
   );
@@ -237,7 +246,12 @@ function SelectField({
 
   useEffect(() => {
     function closeOnOutside(event: MouseEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (
+        !rootRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      )
+        setOpen(false);
     }
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
@@ -250,6 +264,33 @@ function SelectField({
     };
   }, []);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    function positionMenu() {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const menuHeight = Math.min(220, options.length * 42 + 10);
+      const opensUp =
+        rect.bottom + menuHeight + 6 > window.innerHeight &&
+        rect.top > menuHeight + 6;
+      setMenuPosition({
+        top: Math.round(opensUp ? rect.top - menuHeight - 6 : rect.bottom + 6),
+        left: Math.round(
+          Math.min(rect.left, Math.max(8, window.innerWidth - rect.width - 8)),
+        ),
+        width: Math.round(rect.width),
+      });
+    }
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    window.addEventListener("scroll", positionMenu, true);
+    return () => {
+      window.removeEventListener("resize", positionMenu);
+      window.removeEventListener("scroll", positionMenu, true);
+    };
+  }, [open, options.length]);
+
   function choose(nextValue: string) {
     if (value === undefined) setInternalValue(nextValue);
     onChange?.(nextValue);
@@ -259,7 +300,7 @@ function SelectField({
   return (
     <div
       ref={rootRef}
-      className={`select-control ${className}`.trim()}
+      className={`select-control ${className} ${open ? "is-open" : ""}`.trim()}
     >
       <select
         className="custom-select-native"
@@ -278,6 +319,7 @@ function SelectField({
       </select>
       <button
         type="button"
+        ref={triggerRef}
         className="select-trigger"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
@@ -295,21 +337,35 @@ function SelectField({
         <span className="select-chevron" aria-hidden="true" />
       </button>
       {open && (
-        <div className="select-menu" id={id} role="listbox" aria-label={ariaLabel}>
-          {options.map((option) => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={option.value === selectedValue}
-              className={option.value === selectedValue ? "selected" : ""}
-              key={option.value}
-              onClick={() => choose(option.value)}
-            >
-              <span>{option.label}</span>
-              {option.value === selectedValue && <CheckCircle weight="fill" />}
-            </button>
-          ))}
-        </div>
+        createPortal(
+          <div
+            ref={menuRef}
+            className="select-menu select-menu-floating"
+            id={id}
+            role="listbox"
+            aria-label={ariaLabel}
+            style={{
+              top: menuPosition.top,
+              left: menuPosition.left,
+              width: menuPosition.width,
+            }}
+          >
+            {options.map((option) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={option.value === selectedValue}
+                className={option.value === selectedValue ? "selected" : ""}
+                key={option.value}
+                onClick={() => choose(option.value)}
+              >
+                <span>{option.label}</span>
+                {option.value === selectedValue && <CheckCircle weight="fill" />}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )
       )}
     </div>
   );
@@ -897,11 +953,25 @@ function AddressesPage() {
     tags = useAsync(() => request<TagRow[]>("/tags"), []),
     addresses = useAsync(() => request<AddressRow[]>("/addresses"), []);
   const [open, setOpen] = useState(Boolean(params.get("prefill"))),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [query, setQuery] = useState("");
   const prefill = params.get("prefill") ?? "";
   const defaultDomain = domains.data?.find((d) =>
     prefill.endsWith(`@${d.domain_ascii}`),
   );
+  const rows = addresses.data ?? [];
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleRows = rows.filter((address) =>
+    normalizedQuery
+      ? [address.address_normalized, address.note ?? "", address.tag_name ?? ""]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery)
+      : true,
+  );
+  const taggedCount = rows.filter((address) => address.tag_id).length;
+  const receivedCount = rows.filter((address) => address.last_received_at).length;
+  const enabledDomainCount = domains.data?.filter((domain) => domain.enabled).length ?? 0;
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
@@ -923,32 +993,55 @@ function AddressesPage() {
   }
   return (
     <>
-      <header className="page-head">
+      <header className="page-head registry-head">
         <div>
           <p className="eyebrow">REGISTRY</p>
           <h1>{t("地址登记")}</h1>
           <p>{t("地址无需登记即可收件；这里仅保存标签和备注，帮助整理历史与未来邮件。")}</p>
         </div>
-        <button className="primary" onClick={() => setOpen(true)}>
+        <button
+          className="primary registry-action"
+          onClick={() => {
+            setError("");
+            setOpen(true);
+          }}
+        >
           <Plus />
           {t("登记地址")}
         </button>
       </header>
-      <ErrorNotice message={addresses.error} />
-      <section className="table-card">
-        {addresses.data?.length ? (
-          <table>
-            <thead>
-              <tr>
-                <th>{t("完整地址")}</th>
-                <th>{t("标签")}</th>
-                <th>{t("备注")}</th>
-                <th>{t("最近收件")}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {addresses.data.map((a) => (
+      <ErrorNotice message={addresses.error || error} />
+      <div className="registry-layout">
+        <section className="registry-main">
+          <div className="registry-toolbar">
+            <div>
+              <p className="eyebrow">{t("已登记地址")}</p>
+              <h2>{t("整理收件地址")}</h2>
+            </div>
+            <label className="registry-search">
+              <MagnifyingGlass aria-hidden="true" />
+              <span className="visually-hidden">{t("搜索地址或备注")}</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("搜索地址或备注")}
+              />
+            </label>
+          </div>
+          <section className="table-card registry-table-card">
+            {visibleRows.length ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t("完整地址")}</th>
+                    <th>{t("标签")}</th>
+                    <th>{t("备注")}</th>
+                    <th>{t("最近收件")}</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRows.map((a) => (
                 <tr key={a.id}>
                   <td>
                     <strong>{a.address_normalized}</strong>
@@ -1014,15 +1107,56 @@ function AddressesPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <Empty title={t("还没有人工登记的地址")}>
-            {t("随机地址仍能正常接收邮件。需要按用途整理时，再添加一条登记记录。")}
-          </Empty>
-        )}
-      </section>
+                  ))}
+                </tbody>
+              </table>
+            ) : normalizedQuery ? (
+              <Empty title={t("没有匹配的地址")}>
+                {t("换一个地址、标签或备注关键词试试。")}
+              </Empty>
+            ) : (
+              <Empty title={t("还没有人工登记的地址")}>
+                {t("随机地址仍能正常接收邮件。需要按用途整理时，再添加一条登记记录。")}
+              </Empty>
+            )}
+          </section>
+        </section>
+        <aside className="registry-insights">
+          <section className="registry-summary">
+            <div className="registry-summary-head">
+              <div>
+                <p className="eyebrow">{t("登记概览")}</p>
+                <h2>{t("地址整理状态")}</h2>
+              </div>
+              <UserCircle size={24} />
+            </div>
+            <div className="registry-stats">
+              <div>
+                <strong>{rows.length}</strong>
+                <span>{t("全部地址")}</span>
+              </div>
+              <div>
+                <strong>{taggedCount}</strong>
+                <span>{t("已打标签")}</span>
+              </div>
+              <div>
+                <strong>{receivedCount}</strong>
+                <span>{t("最近有收件")}</span>
+              </div>
+              <div>
+                <strong>{enabledDomainCount}</strong>
+                <span>{t("启用域名")}</span>
+              </div>
+            </div>
+          </section>
+          <section className="registry-guide">
+            <div className="registry-guide-icon"><Globe /></div>
+            <h2>{t("登记说明")}</h2>
+            <p>{t("登记只影响标签；任何已启用域名下的地址都可以收件。")}</p>
+            <p>{t("删除登记关系只会移除标签和备注，历史邮件仍然保留。")}</p>
+          </section>
+        </aside>
+      </div>
       {open && (
         <Modal title={t("登记完整地址")} onClose={() => setOpen(false)}>
           <form className="stack" onSubmit={create}>
