@@ -47,3 +47,18 @@ export async function request<T>(
       }) as T)
     : success.data;
 }
+
+export async function requestText(path: string): Promise<string> {
+  const response = await fetch(`/api${path}`, { credentials: "same-origin" });
+  if (!response.ok) {
+    const parsed = (await response.json().catch(() => null)) as
+      | ApiErrorShape
+      | null;
+    throw new ApiError(
+      response.status,
+      parsed?.error.code ?? "REQUEST_FAILED",
+      parsed?.error.message ?? "请求失败。",
+    );
+  }
+  return response.text();
+}

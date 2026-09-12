@@ -6,6 +6,7 @@ import {
   type ParseMessageRow,
 } from "../mail/payload";
 import { processWebhookBatch } from "../webhooks/service";
+import { WEBHOOK_RECORD_RETENTION_MS } from "../webhooks/records";
 
 async function acquireGlobalLease(
   env: Env,
@@ -202,15 +203,73 @@ async function purgeDeleted(
   return rows.results.length;
 }
 
+async function cleanupWebhookRecords(
+  env: Env,
+  now: number,
+  limit = 20,
+): Promise<void> {
+  const records = await env.DB.prepare(
+    "SELECT id,response_object_key FROM webhook_send_records WHERE expires_at<=? AND (cleanup_next_attempt_at IS NULL OR cleanup_next_attempt_at<=?) ORDER BY expires_at LIMIT ?",
+  )
+    .bind(now, now, limit)
+    .all<{ id: string; response_object_key: string | null }>();
+  for (const record of records.results) {
+    try {
+      if (record.response_object_key)
+        await env.MAIL_STORAGE.delete(record.response_object_key);
+      await env.DB.prepare("DELETE FROM webhook_send_records WHERE id=?")
+        .bind(record.id)
+        .run();
+    } catch {
+      await env.DB.prepare(
+        "UPDATE webhook_send_records SET cleanup_attempts=cleanup_attempts+1,cleanup_error_code='R2_DELETE_FAILED',cleanup_next_attempt_at=? WHERE id=?",
+      )
+        .bind(now + 3600000, record.id)
+        .run();
+    }
+  }
+  const snapshots = await env.DB.prepare(
+    "SELECT id,payload_object_key,raw_object_key FROM webhook_request_snapshots s WHERE s.expires_at<=? AND (s.cleanup_next_attempt_at IS NULL OR s.cleanup_next_attempt_at<=?) AND NOT EXISTS(SELECT 1 FROM webhook_send_records r WHERE r.snapshot_id=s.id) ORDER BY s.expires_at LIMIT ?",
+  )
+    .bind(now, now, limit)
+    .all<{
+      id: string;
+      payload_object_key: string;
+      raw_object_key: string;
+    }>();
+  for (const snapshot of snapshots.results) {
+    try {
+      await Promise.all([
+        env.MAIL_STORAGE.delete(snapshot.payload_object_key),
+        env.MAIL_STORAGE.delete(snapshot.raw_object_key),
+      ]);
+      await env.DB.prepare("DELETE FROM webhook_request_snapshots WHERE id=?")
+        .bind(snapshot.id)
+        .run();
+    } catch {
+      await env.DB.prepare(
+        "UPDATE webhook_request_snapshots SET cleanup_attempts=cleanup_attempts+1,cleanup_error_code='R2_DELETE_FAILED',cleanup_next_attempt_at=? WHERE id=?",
+      )
+        .bind(now + 3600000, snapshot.id)
+        .run();
+    }
+  }
+  await env.DB.batch([
+    env.DB.prepare(
+      "DELETE FROM webhook_attempts WHERE COALESCE(finished_at,started_at)<?",
+    ).bind(now - WEBHOOK_RECORD_RETENTION_MS),
+    env.DB.prepare(
+      "DELETE FROM webhook_deliveries WHERE status IN ('succeeded','failed','expired','canceled') AND updated_at<?",
+    ).bind(now - WEBHOOK_RECORD_RETENTION_MS),
+  ]);
+}
+
 async function prune(env: Env, now: number): Promise<void> {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM receive_dedup WHERE expires_at<=?").bind(now),
     env.DB.prepare("DELETE FROM auth_rate_limits WHERE expires_at<=?").bind(
       now,
     ),
-    env.DB.prepare(
-      "DELETE FROM webhook_attempts WHERE finished_at IS NOT NULL AND finished_at<?",
-    ).bind(now - 30 * 86400000),
   ]);
 }
 
@@ -233,9 +292,16 @@ async function scanOrphanObjects(
     const createdAt = Number(object.customMetadata?.createdAt ?? NaN);
     if (!Number.isFinite(createdAt) || createdAt > now - 86400000) continue;
     const referenced = await env.DB.prepare(
-      "SELECT 1 referenced FROM messages m WHERE (m.raw_object_key=? AND m.purge_state!='complete') OR m.content_object_key=? UNION ALL SELECT 1 FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.object_key=? AND a.parse_run_id=m.active_parse_run_id AND m.deleted_at IS NULL LIMIT 1",
+      "SELECT 1 referenced FROM messages m WHERE (m.raw_object_key=? AND m.purge_state!='complete') OR m.content_object_key=? UNION ALL SELECT 1 FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.object_key=? AND a.parse_run_id=m.active_parse_run_id AND m.deleted_at IS NULL UNION ALL SELECT 1 FROM webhook_request_snapshots s WHERE s.payload_object_key=? OR s.raw_object_key=? UNION ALL SELECT 1 FROM webhook_send_records r WHERE r.response_object_key=? LIMIT 1",
     )
-      .bind(object.key, object.key, object.key)
+      .bind(
+        object.key,
+        object.key,
+        object.key,
+        object.key,
+        object.key,
+        object.key,
+      )
       .first();
     if (!referenced) {
       await env.MAIL_STORAGE.delete(object.key);
@@ -277,6 +343,7 @@ export async function runMaintenance(
   let cleaned = 0;
   if (!last || last.value_int <= now - 3600000) {
     cleaned = await cleanupExpired(env, now);
+    await cleanupWebhookRecords(env, now);
     await env.DB.prepare(
       "INSERT INTO maintenance_state(key,value_int,updated_at) VALUES('last_cleanup_at',?,?) ON CONFLICT(key) DO UPDATE SET value_int=excluded.value_int,updated_at=excluded.updated_at",
     )

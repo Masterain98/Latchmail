@@ -456,6 +456,15 @@ aside {
   background: var(--green);
   color: var(--green-ink);
 }
+.state.retry,
+.state.started {
+  background: #fff4d7;
+  color: #7a5a12;
+}
+.state.interrupted {
+  background: #eee9f5;
+  color: #655279;
+}
 .mail-main p {
   margin: 4px 0 3px;
   font-size: 12px;
@@ -534,6 +543,11 @@ aside {
   background: var(--red);
   color: var(--red-ink);
   border-color: #f0d9d7;
+}
+.notice.success {
+  background: var(--green);
+  color: var(--green-ink);
+  border-color: #d6e4d4;
 }
 .detail-head {
   display: flex;
@@ -982,7 +996,6 @@ textarea {
   grid-template-areas:
     "domains tags"
     "domains retention"
-    "webhook webhook"
     "status status";
   gap: 18px;
   align-items: start;
@@ -1000,11 +1013,318 @@ textarea {
 .settings-retention {
   grid-area: retention;
 }
-.settings-webhook {
-  grid-area: webhook;
-}
 .settings-status {
   grid-area: status;
+}
+
+.webhook-head {
+  margin-bottom: 26px;
+}
+.webhook-config,
+.webhook-records-section {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.webhook-config {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.72fr) minmax(360px, 1.28fr);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.webhook-config-copy {
+  padding: 28px;
+  background: #f0efec;
+  border-right: 1px solid var(--line);
+}
+.webhook-config-copy h2 {
+  margin: 18px 0 8px;
+  font-size: 24px;
+  letter-spacing: -0.035em;
+}
+.webhook-config-copy > p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 44ch;
+}
+.webhook-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+.webhook-live::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #bbb8b1;
+}
+.webhook-live.on {
+  color: var(--green-ink);
+}
+.webhook-live.on::before {
+  background: #4e7458;
+  box-shadow: 0 0 0 4px rgba(78, 116, 88, 0.12);
+}
+.webhook-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 24px 0 0;
+  border: 1px solid #dbd8d2;
+  background: #dbd8d2;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.webhook-facts div {
+  padding: 11px 12px;
+  background: rgba(255, 255, 255, 0.55);
+}
+.webhook-facts dt,
+.webhook-facts dd {
+  margin: 0;
+}
+.webhook-facts dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+.webhook-facts dd {
+  margin-top: 4px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.webhook-config-form {
+  padding: 28px;
+  align-content: center;
+}
+.webhook-records-section {
+  padding: 24px;
+}
+.webhook-records-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  padding-bottom: 18px;
+}
+.webhook-records-head h2 {
+  margin: 4px 0 6px;
+  font-size: 22px;
+  letter-spacing: -0.035em;
+}
+.webhook-records-head p:not(.eyebrow) {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.record-filters {
+  display: grid;
+  grid-template-columns: 150px 150px;
+  gap: 8px;
+}
+.webhook-records-layout {
+  display: grid;
+  grid-template-columns: minmax(420px, 0.95fr) minmax(360px, 1.05fr);
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 460px;
+}
+.record-list,
+.record-detail {
+  min-width: 0;
+  background: #fff;
+}
+.record-list {
+  display: flex;
+  flex-direction: column;
+}
+.record-row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 14px;
+  text-align: left;
+  transition: background-color 0.2s;
+}
+.record-row:hover,
+.record-row.selected {
+  background: #f5f4f1;
+}
+.record-row.selected {
+  box-shadow: inset 3px 0 var(--blue-ink);
+}
+.record-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.record-main strong,
+.record-main small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.record-main strong {
+  font-size: 13px;
+}
+.record-main small,
+.record-code small,
+.record-row time {
+  color: var(--muted);
+  font-size: 10px;
+}
+.record-code {
+  display: grid;
+  gap: 3px;
+  text-align: right;
+  font:
+    600 11px/1.3 Geist Mono,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+.record-row time {
+  grid-column: 2 / -1;
+}
+.record-pagination {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-top: auto;
+  padding: 12px;
+}
+.record-loading {
+  min-height: 180px;
+  display: grid;
+  place-content: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.record-detail {
+  position: static;
+  height: auto;
+  padding: 20px;
+  border: 0;
+  display: block;
+  overflow: auto;
+  max-height: 760px;
+}
+.record-detail > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+.record-detail > header > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.record-detail h3 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: -0.025em;
+}
+.record-detail-empty {
+  min-height: 410px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  text-align: center;
+  color: var(--muted);
+}
+.record-detail-empty h3 {
+  margin: 12px 0 5px;
+  color: var(--ink);
+}
+.record-detail-empty p {
+  margin: 0;
+  font-size: 12px;
+}
+.record-detail-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0 0 18px;
+  border-top: 1px solid var(--line);
+}
+.record-detail-facts div {
+  min-width: 0;
+  padding: 11px 10px 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+.record-detail-facts div:first-child {
+  grid-column: 1 / -1;
+}
+.record-detail-facts dt,
+.record-detail-facts dd {
+  margin: 0;
+}
+.record-detail-facts dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+.record-detail-facts dd {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.record-detail details {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.record-detail summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+.record-detail pre {
+  max-height: 310px;
+  margin: 11px 0 0;
+  overflow: auto;
+  padding: 13px;
+  border-radius: 6px;
+  background: #f3f2ef;
+  color: #3b3935;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    11px/1.55 Geist Mono,
+    monospace;
+}
+.record-content-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.button-link {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #fff;
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 13px;
 }
 .settings-tags .inline-form {
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1319,8 +1639,13 @@ textarea {
       "domains"
       "tags"
       "retention"
-      "webhook"
       "status";
+  }
+  .webhook-records-layout {
+    grid-template-columns: 1fr;
+  }
+  .record-detail {
+    max-height: none;
   }
   .registry-layout {
     grid-template-columns: 1fr;
@@ -1356,7 +1681,7 @@ textarea {
   }
   .shell nav {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
   }
   .shell nav a,
   .shell nav a:not(.active),
@@ -1385,6 +1710,14 @@ textarea {
   }
   .page-head > button {
     white-space: nowrap;
+  }
+  .webhook-head,
+  .settings-head {
+    display: block;
+  }
+  .webhook-head > button,
+  .settings-head > button {
+    margin-top: 14px;
   }
   .registry-toolbar {
     align-items: stretch;
@@ -1462,8 +1795,40 @@ textarea {
       "domains"
       "tags"
       "retention"
-      "webhook"
       "status";
+  }
+  .webhook-config {
+    grid-template-columns: 1fr;
+  }
+  .webhook-config-copy {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .webhook-records-section {
+    padding: 14px;
+  }
+  .webhook-records-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .record-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+  .webhook-records-layout {
+    display: block;
+  }
+  .record-detail {
+    display: none;
+    border-top: 1px solid var(--line);
+  }
+  .record-detail.open {
+    display: block;
+  }
+  .record-detail-facts {
+    grid-template-columns: 1fr;
+  }
+  .record-detail-facts div:first-child {
+    grid-column: auto;
   }
   .section-title {
     display: block;

@@ -36,7 +36,12 @@ describe("runtime D1 initialization", () => {
       await migrationEnv.MIGRATION_DB.prepare(
         "SELECT name FROM d1_migrations ORDER BY id",
       ).all<{ name: string }>(),
-    ).toMatchObject({ results: [{ name: "0001_initial.sql" }] });
+    ).toMatchObject({
+      results: [
+        { name: "0001_initial.sql" },
+        { name: "0002_webhook_send_records.sql" },
+      ],
+    });
     expect(
       await migrationEnv.MIGRATION_DB.prepare(
         "SELECT attachment_retention_days FROM app_settings WHERE singleton=1",

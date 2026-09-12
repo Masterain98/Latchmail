@@ -1,5 +1,13 @@
 import type { Env } from "../env";
 import { base64ToBytes, bytesToBase64, hmac, uuid } from "../crypto";
+import {
+  beginSendRecord,
+  captureRequestSnapshotFromKeys,
+  captureResponseBytes,
+  finishSendRecord,
+  registerRequestSnapshot,
+  WEBHOOK_RECORD_RETENTION_MS,
+} from "./records";
 
 const backoffMs = [
   60_000, 300_000, 900_000, 3_600_000, 10_800_000, 21_600_000, 43_200_000,
@@ -14,6 +22,8 @@ interface DeliveryRow {
   cycle_attempts: number;
   cycle_started_at: number | null;
   retry_deadline_at: number | null;
+  status: string;
+  lease_until: number | null;
   raw_object_key: string;
   raw_expires_at: number;
   raw_sha256: string;
@@ -83,29 +93,6 @@ function retryAfter(response: Response, now: number): number | null {
   return Number.isFinite(date) && date > now ? date : null;
 }
 
-async function excerpt(response: Response): Promise<string> {
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let result = "";
-  try {
-    while (result.length < 1024) {
-      const part = await reader.read();
-      if (part.done) break;
-      result += decoder.decode(part.value, { stream: true });
-    }
-    await reader.cancel();
-  } catch {
-    await reader.cancel().catch(() => undefined);
-  }
-  return result
-    .slice(0, 1024)
-    .replace(
-      /(authorization|cookie|token|secret)\s*[:=]\s*[^\s,;]+/gi,
-      "$1=[REDACTED]",
-    );
-}
-
 export async function sendWebhookParts(
   env: Env,
   row: Pick<
@@ -117,6 +104,7 @@ export async function sendWebhookParts(
   rawFilename: string,
   now: number,
   signal?: AbortSignal,
+  onPrepared?: (headers: Record<string, string>) => void,
 ): Promise<Response> {
   if (!env.WEBHOOK_SIGNING_SECRET) throw new Error("WEBHOOK_SECRET_MISSING");
   const secret = base64ToBytes(env.WEBHOOK_SIGNING_SECRET);
@@ -125,19 +113,21 @@ export async function sendWebhookParts(
   const signable = `${row.event_id}.${row.id}.${timestamp}.${row.content_sha256}`;
   const signature = bytesToBase64(await hmac(secret, signable));
   const boundary = `latchmail-${uuid().replace(/-/g, "")}`;
+  const headers = {
+    "Content-Type": `multipart/form-data; boundary=${boundary}`,
+    "X-Inbox-Event-Id": row.event_id,
+    "X-Inbox-Delivery-Id": row.id,
+    "X-Inbox-Timestamp": timestamp,
+    "X-Inbox-Payload-SHA256": row.content_sha256,
+    "X-Inbox-Signature": `v1,${signature}`,
+    "User-Agent": "Latchmail/1.0",
+  };
+  onPrepared?.({ ...headers, "X-Inbox-Signature": "v1,[NOT RETAINED]" });
   return fetch(row.endpoint_url_snapshot, {
     method: "POST",
     redirect: "manual",
     signal,
-    headers: {
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
-      "X-Inbox-Event-Id": row.event_id,
-      "X-Inbox-Delivery-Id": row.id,
-      "X-Inbox-Timestamp": timestamp,
-      "X-Inbox-Payload-SHA256": row.content_sha256,
-      "X-Inbox-Signature": `v1,${signature}`,
-      "User-Agent": "Latchmail/1.0",
-    },
+    headers,
     body: multipart(payload, raw, boundary, rawFilename),
   });
 }
@@ -149,7 +139,7 @@ export async function processWebhookBatch(
 ): Promise<number> {
   let completed = 0;
   const due = await env.DB.prepare(
-    "SELECT d.id,d.message_id,d.event_id,d.endpoint_url_snapshot,d.endpoint_revision,d.attempts_total,d.cycle_attempts,d.cycle_started_at,d.retry_deadline_at,m.raw_object_key,m.raw_expires_at,m.raw_sha256,m.raw_size_bytes,m.content_object_key,m.content_sha256,m.content_size_bytes FROM webhook_deliveries d JOIN messages m ON m.id=d.message_id JOIN app_settings s ON s.singleton=1 WHERE d.status IN ('pending','retry_wait','inflight') AND (d.next_attempt_at IS NULL OR d.next_attempt_at<=?) AND (d.status!='inflight' OR d.lease_until<=?) AND m.deleted_at IS NULL AND d.endpoint_revision=s.webhook_revision AND s.webhook_enabled=1 ORDER BY COALESCE(d.next_attempt_at,d.created_at) LIMIT ?",
+    "SELECT d.id,d.message_id,d.event_id,d.endpoint_url_snapshot,d.endpoint_revision,d.attempts_total,d.cycle_attempts,d.cycle_started_at,d.retry_deadline_at,d.status,d.lease_until,m.raw_object_key,m.raw_expires_at,m.raw_sha256,m.raw_size_bytes,m.content_object_key,m.content_sha256,m.content_size_bytes FROM webhook_deliveries d JOIN messages m ON m.id=d.message_id JOIN app_settings s ON s.singleton=1 WHERE d.status IN ('pending','retry_wait','inflight') AND (d.next_attempt_at IS NULL OR d.next_attempt_at<=?) AND (d.status!='inflight' OR d.lease_until<=?) AND m.deleted_at IS NULL AND d.endpoint_revision=s.webhook_revision AND s.webhook_enabled=1 ORDER BY COALESCE(d.next_attempt_at,d.created_at) LIMIT ?",
   )
     .bind(now, now, limit)
     .all<DeliveryRow>();
@@ -174,15 +164,56 @@ export async function processWebhookBatch(
       if (!Number(claim.meta.changes)) return;
       const attempt = row.attempts_total + 1;
       const attemptId = uuid();
+      if (row.status === "inflight" && row.lease_until != null) {
+        await env.DB.batch([
+          env.DB.prepare(
+            "UPDATE webhook_send_records SET result='interrupted',finished_at=?,duration_ms=MAX(0,?-started_at),error_code='LEASE_EXPIRED',expires_at=? WHERE delivery_id=? AND result='started'",
+          ).bind(
+            row.lease_until,
+            row.lease_until,
+            row.lease_until + WEBHOOK_RECORD_RETENTION_MS,
+            row.id,
+          ),
+          env.DB.prepare(
+            "UPDATE webhook_attempts SET finished_at=?,duration_ms=MAX(0,?-started_at),result='interrupted',error_code='LEASE_EXPIRED' WHERE delivery_id=? AND result='started'",
+          ).bind(row.lease_until, row.lease_until, row.id),
+        ]);
+      }
       await env.DB.prepare(
         "INSERT INTO webhook_attempts(id,delivery_id,attempt_number,started_at,result) VALUES(?,?,?,?,'started')",
       )
         .bind(attemptId, row.id, attempt, now)
         .run();
+      await registerRequestSnapshot(
+        env,
+        {
+          id: row.id,
+          deliveryId: row.id,
+          rawFilename: `${row.message_id}.eml`,
+          payloadSize: row.content_size_bytes,
+          rawSize: row.raw_size_bytes,
+        },
+        now,
+      );
+      await beginSendRecord(
+        env,
+        {
+          id: attemptId,
+          snapshotId: row.id,
+          deliveryId: row.id,
+          eventId: row.event_id,
+          kind: "email",
+          attemptNumber: attempt,
+          endpointUrl: row.endpoint_url_snapshot,
+        },
+        now,
+      );
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30000);
       let response: Response | null = null;
       let errorCode: string | null = null;
+      let requestHeaders: Record<string, string> = {};
+      let snapshotCapture: Promise<void> = Promise.resolve();
       try {
         const [payload, raw] = await Promise.all([
           env.MAIL_STORAGE.get(row.content_object_key),
@@ -190,6 +221,13 @@ export async function processWebhookBatch(
         ]);
         if (!payload || !raw)
           throw new Error(!raw ? "RAW_MISSING" : "CONTENT_MISSING");
+        snapshotCapture = captureRequestSnapshotFromKeys(
+          env,
+          row.id,
+          row.content_object_key,
+          row.raw_object_key,
+          now,
+        );
         response = await sendWebhookParts(
           env,
           row,
@@ -198,6 +236,9 @@ export async function processWebhookBatch(
           `${row.message_id}.eml`,
           now,
           controller.signal,
+          (headers) => {
+            requestHeaders = headers;
+          },
         );
       } catch (error) {
         errorCode =
@@ -210,7 +251,9 @@ export async function processWebhookBatch(
         clearTimeout(timeout);
       }
       const finished = Date.now();
-      const bodyExcerpt = response ? await excerpt(response) : "";
+      const captured = response ? await captureResponseBytes(response) : null;
+      await snapshotCapture;
+      const bodyExcerpt = captured?.excerpt ?? "";
       const status = response?.status ?? null;
       if (response && status != null && status >= 200 && status < 300) {
         await env.DB.batch([
@@ -221,6 +264,16 @@ export async function processWebhookBatch(
             "UPDATE webhook_deliveries SET status='succeeded',delivered_at=?,last_http_status=?,last_error_code=NULL,lease_token=NULL,lease_until=NULL,updated_at=? WHERE id=? AND lease_token=?",
           ).bind(finished, status, finished, row.id, lease),
         ]);
+        await finishSendRecord(env, {
+          id: attemptId,
+          finishedAt: finished,
+          result: "succeeded",
+          httpStatus: status,
+          durationMs: finished - now,
+          errorCode: null,
+          requestHeaders,
+          response: captured,
+        });
         completed++;
         return;
       }
@@ -258,6 +311,16 @@ export async function processWebhookBatch(
           lease,
         ),
       ]);
+      await finishSendRecord(env, {
+        id: attemptId,
+        finishedAt: finished,
+        result: terminal ? "failed" : "retry",
+        httpStatus: status,
+        durationMs: finished - now,
+        errorCode: finalError,
+        requestHeaders,
+        response: captured,
+      });
       completed++;
     }),
   );

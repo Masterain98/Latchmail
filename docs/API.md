@@ -4,7 +4,9 @@
 
 All business routes use `/api`, JSON success `{ "data": ... }`, and structured errors `{ "error": { "code", "message", "request_id" } }`. Browser calls use `POST /api/auth/login` with `{ "password": "<ADMIN_PASSWORD>" }`, followed by a signed `__Host-` HttpOnly cookie plus Origin and `X-CSRF-Token` on writes. Automation may use `Authorization: Bearer <ADMIN_API_TOKEN>` when that independent optional Secret is configured. The administrator password is never accepted as a Bearer credential.
 
-Implemented groups: `auth/login|logout|session`; CRUD for `domains`, `tags`, and `addresses`; cursor-list/detail/PATCH/DELETE plus raw download for `messages`; attachment download; retention `settings`; webhook get/put/test, delivery list/detail/retry/cancel and per-message enqueue; system status and bounded maintenance. `GET` never marks a message read.
+Implemented groups: `auth/login|logout|session`; CRUD for `domains`, `tags`, and `addresses`; cursor-list/detail/PATCH/DELETE plus raw download for `messages`; attachment download; retention `settings`; webhook get/put/test, 48-hour send records, delivery list/detail/retry/cancel and per-message enqueue; system status and bounded maintenance. `GET` never marks a message read.
+
+Webhook diagnostics use `GET /webhook/records` with `cursor`, `limit`, optional `kind=email|test`, and optional `result=started|succeeded|retry|failed|interrupted`. `GET /webhook/records/:id` returns bounded metadata; `/payload`, `/raw`, and `/response` resolve only server-owned private R2 objects associated with that record. Response bodies are captured up to 64 KiB and report truncation. Records are logically unavailable 48 hours after completion and are then physically removed by bounded maintenance.
 
 List filters: `cursor`, `limit`, `domain_id`, `tag_id`, `recipient`, `registered`, `untagged`, `unread`, `archived`, `webhook_status`, `q`. Default limit is 50 and maximum is 100. Search is a bounded parameterized `instr()` query over D1 metadata and current registration information; it never downloads R2 bodies.
 

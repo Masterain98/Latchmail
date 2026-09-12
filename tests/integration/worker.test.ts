@@ -6,10 +6,21 @@ import {
 } from "cloudflare:test";
 import worker from "../../src/worker/index";
 import { runMaintenance } from "../../src/worker/maintenance/service";
+import {
+  beginSendRecord,
+  captureRequestSnapshotFromKeys,
+  captureResponseBytes,
+  finishSendRecord,
+  registerRequestSnapshot,
+  responseObjectKey,
+  snapshotObjectKeys,
+} from "../../src/worker/webhooks/records";
 
 const fixture = `From: Service <notify@example.net>\r\nTo: visible@example.net\r\nSubject: Registration received\r\nMessage-ID: <fixture@example.net>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSynthetic body.\r\n`;
 async function clear() {
   const tables = [
+    "webhook_send_records",
+    "webhook_request_snapshots",
     "webhook_attempts",
     "webhook_deliveries",
     "attachments",
@@ -271,6 +282,238 @@ describe("worker vertical path", () => {
         webhook_url: string | null;
       }>(),
     ).toEqual({ webhook_url: null });
+  });
+  it("serves webhook send records safely and removes them after 48 hours", async () => {
+    const timestamp = Date.now();
+    const id = crypto.randomUUID();
+    const eventId = crypto.randomUUID();
+    const payload = new TextEncoder().encode('{"event":"webhook.test"}');
+    const raw = new TextEncoder().encode("Subject: test\r\n\r\nbody\r\n");
+    const sourcePayloadKey = `test-sources/${id}/payload.json`;
+    const sourceRawKey = `test-sources/${id}/raw.eml`;
+    await Promise.all([
+      env.MAIL_STORAGE.put(sourcePayloadKey, payload),
+      env.MAIL_STORAGE.put(sourceRawKey, raw),
+    ]);
+    await registerRequestSnapshot(
+      env,
+      {
+        id,
+        deliveryId: null,
+        rawFilename: "test.eml",
+        payloadSize: payload.byteLength,
+        rawSize: raw.byteLength,
+      },
+      timestamp,
+    );
+    await captureRequestSnapshotFromKeys(
+      env,
+      id,
+      sourcePayloadKey,
+      sourceRawKey,
+      timestamp,
+    );
+    await beginSendRecord(
+      env,
+      {
+        id,
+        snapshotId: id,
+        deliveryId: crypto.randomUUID(),
+        eventId,
+        kind: "test",
+        attemptNumber: 1,
+        endpointUrl: "https://hooks.example.com/email",
+      },
+      timestamp,
+    );
+    const captured = await captureResponseBytes(
+      new Response("accepted", {
+        status: 202,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
+    await finishSendRecord(env, {
+      id,
+      finishedAt: timestamp + 25,
+      result: "succeeded",
+      httpStatus: 202,
+      durationMs: 25,
+      errorCode: null,
+      requestHeaders: { "X-Inbox-Signature": "v1,[NOT RETAINED]" },
+      response: captured,
+    });
+    const authorization = {
+      Authorization:
+        "Bearer independent-api-token-with-at-least-thirty-two-bytes",
+    };
+    const list = await worker.fetch!(
+      new Request("https://inbox.test/api/webhook/records", {
+        headers: authorization,
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(list.status).toBe(200);
+    expect((await list.json<any>()).data.records[0]).toMatchObject({
+      id,
+      http_status: 202,
+      response_captured_bytes: 8,
+      response_truncated: false,
+    });
+    const detail = await worker.fetch!(
+      new Request(`https://inbox.test/api/webhook/records/${id}`, {
+        headers: authorization,
+      }),
+      env,
+      createExecutionContext(),
+    );
+    const detailBody = await detail.json<any>();
+    expect(detailBody.data.request_headers).toEqual({
+      "X-Inbox-Signature": "v1,[NOT RETAINED]",
+    });
+    expect(JSON.stringify(detailBody)).not.toContain("object_key");
+    expect(Date.parse(detailBody.data.expires_at)).toBe(
+      timestamp + 25 + 48 * 60 * 60 * 1000,
+    );
+    for (const [path, expected] of [
+      ["payload", '{"event":"webhook.test"}'],
+      ["raw", "Subject: test\r\n\r\nbody\r\n"],
+      ["response", "accepted"],
+    ]) {
+      const response = await worker.fetch!(
+        new Request(`https://inbox.test/api/webhook/records/${id}/${path}`, {
+          headers: authorization,
+        }),
+        env,
+        createExecutionContext(),
+      );
+      expect(response.status).toBe(200);
+      expect(new TextDecoder().decode(await response.arrayBuffer())).toBe(
+        expected,
+      );
+    }
+    const expiredAt = Date.now() - 1;
+    const expired = await worker.fetch!(
+      new Request(`https://inbox.test/api/webhook/records/${id}`, {
+        headers: authorization,
+      }),
+      env,
+      createExecutionContext(),
+    );
+    await env.DB.batch([
+      env.DB.prepare("UPDATE webhook_send_records SET expires_at=? WHERE id=?").bind(
+        expiredAt,
+        id,
+      ),
+      env.DB.prepare(
+        "UPDATE webhook_request_snapshots SET expires_at=? WHERE id=?",
+      ).bind(expiredAt, id),
+    ]);
+    const logicallyExpired = await worker.fetch!(
+      new Request(`https://inbox.test/api/webhook/records/${id}`, {
+        headers: authorization,
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect(expired.status).toBe(200);
+    expect(logicallyExpired.status).toBe(410);
+    const listAfterExpiry = await worker.fetch!(
+      new Request("https://inbox.test/api/webhook/records", {
+        headers: authorization,
+      }),
+      env,
+      createExecutionContext(),
+    );
+    expect((await listAfterExpiry.json<any>()).data.records).toEqual([]);
+    await runMaintenance(env, Date.now());
+    expect(
+      await env.DB.prepare("SELECT id FROM webhook_send_records WHERE id=?")
+        .bind(id)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.MAIL_STORAGE.head(responseObjectKey(id)),
+    ).toBeNull();
+    const snapshotKeys = snapshotObjectKeys(id);
+    expect(await env.MAIL_STORAGE.head(snapshotKeys.payload)).toBeNull();
+    expect(await env.MAIL_STORAGE.head(snapshotKeys.raw)).toBeNull();
+    await Promise.all([
+      env.MAIL_STORAGE.delete(sourcePayloadKey),
+      env.MAIL_STORAGE.delete(sourceRawKey),
+    ]);
+  });
+  it("prunes terminal webhook tasks after 48 hours without removing active tasks", async () => {
+    const timestamp = Date.now();
+    const old = timestamp - 48 * 60 * 60 * 1000 - 1;
+    const domainId = crypto.randomUUID();
+    const messageId = crypto.randomUUID();
+    const eventId = crypto.randomUUID();
+    const terminalId = crypto.randomUUID();
+    const activeId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO domains(id,domain_ascii,display_name,enabled,created_at,updated_at) VALUES(?,?,?,1,?,?)",
+      ).bind(domainId, "records.example", "records.example", timestamp, timestamp),
+      env.DB.prepare(
+        "INSERT INTO messages(id,event_id,domain_id,received_at,envelope_from,envelope_to_original,envelope_to_normalized,raw_sha256,raw_size_bytes,raw_object_key,raw_expires_at,retention_days_snapshot,notification_requested,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      ).bind(
+        messageId,
+        eventId,
+        domainId,
+        timestamp,
+        "sender@example.net",
+        "box@records.example",
+        "box@records.example",
+        "0".repeat(64),
+        0,
+        `raw/${messageId}`,
+        timestamp + 30 * 86400000,
+        30,
+        1,
+        timestamp,
+        timestamp,
+      ),
+      env.DB.prepare(
+        "INSERT INTO webhook_deliveries(id,message_id,event_id,endpoint_url_snapshot,endpoint_revision,status,created_at,updated_at) VALUES(?,?,?,?,?,'succeeded',?,?)",
+      ).bind(
+        terminalId,
+        messageId,
+        eventId,
+        "https://hooks.example.com/old",
+        1,
+        old,
+        old,
+      ),
+      env.DB.prepare(
+        "INSERT INTO webhook_deliveries(id,message_id,event_id,endpoint_url_snapshot,endpoint_revision,status,next_attempt_at,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?,?)",
+      ).bind(
+        activeId,
+        messageId,
+        eventId,
+        "https://hooks.example.com/current",
+        2,
+        timestamp + 60000,
+        old,
+        old,
+      ),
+    ]);
+    await env.DB.prepare(
+      "INSERT INTO webhook_attempts(id,delivery_id,attempt_number,started_at,finished_at,result) VALUES(?,?,?,?,?,'succeeded')",
+    )
+      .bind(crypto.randomUUID(), terminalId, 1, old, old)
+      .run();
+    await runMaintenance(env, timestamp);
+    expect(
+      await env.DB.prepare("SELECT id FROM webhook_deliveries WHERE id=?")
+        .bind(terminalId)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare("SELECT id FROM webhook_deliveries WHERE id=?")
+        .bind(activeId)
+        .first(),
+    ).not.toBeNull();
   });
   it("accepts an unregistered recipient, persists exact raw bytes and parses through maintenance", async () => {
     const now = Date.now();

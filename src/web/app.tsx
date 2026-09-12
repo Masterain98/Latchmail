@@ -38,7 +38,7 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
-import { request, setCsrf } from "./api/client";
+import { request, requestText, setCsrf } from "./api/client";
 import { useI18n, type Locale } from "./i18n";
 import markUrl from "./assets/brand/latchmail-mark.png";
 import wordmarkUrl from "./assets/brand/latchmail-wordmark.png";
@@ -86,6 +86,34 @@ type Message = {
   parse_error_code: string | null;
   webhook_status: string | null;
   current_registration: Registration;
+};
+type WebhookRecord = {
+  id: string;
+  delivery_id: string | null;
+  event_id: string;
+  kind: "email" | "test";
+  attempt_number: number;
+  endpoint_url: string;
+  started_at: string;
+  finished_at: string | null;
+  result: "started" | "succeeded" | "retry" | "failed" | "interrupted";
+  http_status: number | null;
+  duration_ms: number | null;
+  error_code: string | null;
+  response_content_type: string | null;
+  response_captured_bytes: number;
+  response_truncated: boolean;
+  response_excerpt: string | null;
+  expires_at: string;
+  subject_preview?: string | null;
+  envelope_to_normalized?: string | null;
+};
+type WebhookRecordDetail = WebhookRecord & {
+  request_headers: Record<string, string>;
+  raw_filename: string;
+  payload_size_bytes: number;
+  raw_size_bytes: number;
+  capture_error_code: string | null;
 };
 
 function fmt(date: string | null | undefined, locale: Locale): string {
@@ -475,6 +503,10 @@ function Shell({ onLogout }: { onLogout: () => void }) {
             <UserCircle />
             {t("地址登记")}
           </NavLink>
+          <NavLink to="/webhook">
+            <Bell />
+            Webhook
+          </NavLink>
           <NavLink to="/settings">
             <Gear />
             {t("设置与运维")}
@@ -499,6 +531,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           <Route path="/" element={<InboxPage />} />
           <Route path="/messages/:id" element={<MessageDetail />} />
           <Route path="/addresses" element={<AddressesPage />} />
+          <Route path="/webhook" element={<WebhookPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </div>
@@ -953,7 +986,7 @@ function MessageDetail() {
                 </div>
               ))
             ) : (
-              <p className="muted">{t("收件时未创建通知任务。")}</p>
+              <p className="muted">{t("最近 48 小时没有 Webhook 记录。")}</p>
             )}
           </section>
         </aside>
@@ -1225,12 +1258,393 @@ function AddressesPage() {
   );
 }
 
+function prettyJson(value: string | null): string {
+  if (!value) return "";
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
+function WebhookPage() {
+  const { locale, t } = useI18n();
+  const webhook = useAsync(() => request<any>("/webhook"), []);
+  const [resultFilter, setResultFilter] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [cursorHistory, setCursorHistory] = useState<Array<string | null>>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [rawPreview, setRawPreview] = useState("");
+  const [rawLoading, setRawLoading] = useState(false);
+  const records = useAsync(async () => {
+    const params = new URLSearchParams({ limit: "25" });
+    if (resultFilter) params.set("result", resultFilter);
+    if (kindFilter) params.set("kind", kindFilter);
+    if (cursor) params.set("cursor", cursor);
+    return request<{
+      records: WebhookRecord[];
+      next_cursor: string | null;
+    }>(`/webhook/records?${params}`);
+  }, [resultFilter, kindFilter, cursor]);
+  const detail = useAsync<WebhookRecordDetail | null>(
+    () =>
+      selectedId
+        ? request<WebhookRecordDetail>(`/webhook/records/${selectedId}`)
+        : Promise.resolve(null),
+    [selectedId],
+  );
+  const payload = useAsync(
+    () =>
+      selectedId
+        ? requestText(`/webhook/records/${selectedId}/payload`)
+        : Promise.resolve(""),
+    [selectedId],
+  );
+  const responseBody = useAsync(
+    () =>
+      selectedId
+        ? requestText(`/webhook/records/${selectedId}/response`)
+        : Promise.resolve(""),
+    [selectedId],
+  );
+
+  useEffect(() => {
+    setRawPreview("");
+  }, [selectedId]);
+
+  function changeFilter(kind: "result" | "type", value: string) {
+    if (kind === "result") setResultFilter(value);
+    else setKindFilter(value);
+    setCursor(null);
+    setCursorHistory([]);
+    setSelectedId(null);
+  }
+
+  async function sendTest() {
+    setTesting(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await request<any>("/webhook/test", { method: "POST" });
+      setNotice(
+        t("测试请求完成：HTTP {{status}}", { status: result.http_status }),
+      );
+      setSelectedId(result.record_id);
+      void records.refresh();
+    } catch (event) {
+      setError(event instanceof Error ? event.message : t("测试失败"));
+      void records.refresh();
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <>
+      <header className="page-head webhook-head">
+        <div>
+          <p className="eyebrow">DELIVERY LOG</p>
+          <h1>Webhook</h1>
+          <p>{t("配置完整邮件投递，并检查最近 48 小时的每一次发送。")}</p>
+        </div>
+        <button className="secondary" onClick={() => void records.refresh()}>
+          <ArrowClockwise />
+          {t("刷新记录")}
+        </button>
+      </header>
+      <ErrorNotice message={error || webhook.error || records.error} />
+      {notice && (
+        <div className="notice success">
+          <CheckCircle weight="fill" />
+          {notice}
+        </div>
+      )}
+      <section className="webhook-config">
+        <div className="webhook-config-copy">
+          <span className={`webhook-live ${webhook.data?.enabled ? "on" : ""}`}>
+            {webhook.data?.enabled ? t("正在投递") : t("已停用")}
+          </span>
+          <h2>{t("完整邮件投递")}</h2>
+          <p>{t("一次 HTTPS POST 包含 payload JSON 和原始 EML；签名密钥不会出现在记录中。")}</p>
+          {webhook.data && (
+            <dl className="webhook-facts">
+              <div>
+                <dt>{t("签名密钥")}</dt>
+                <dd>
+                  {webhook.data.signing_secret_configured
+                    ? t("已配置")
+                    : t("未配置")}
+                </dd>
+              </div>
+              <div>
+                <dt>{t("端点版本")}</dt>
+                <dd>{webhook.data.revision}</dd>
+              </div>
+            </dl>
+          )}
+        </div>
+        {webhook.data && (
+          <form
+            key={webhook.data.updated_at}
+            className="webhook-config-form stack"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              const url = String(form.get("url") || "") || null;
+              const enabled = form.get("enabled") === "on";
+              const changed = url !== webhook.data.url;
+              if (
+                changed &&
+                !confirm(
+                  t("更换 URL 会取消旧目标的未完成任务，且不会自动转发到新目标。继续？"),
+                )
+              )
+                return;
+              setError("");
+              setNotice("");
+              try {
+                await request("/webhook", {
+                  method: "PUT",
+                  body: JSON.stringify({
+                    enabled,
+                    url,
+                    confirm_cancel_pending: changed,
+                  }),
+                });
+                setNotice(t("Webhook 配置已保存。"));
+                void webhook.refresh();
+              } catch (saveError) {
+                setError(
+                  saveError instanceof Error
+                    ? saveError.message
+                    : t("保存失败"),
+                );
+              }
+            }}
+          >
+            <Field label={t("HTTPS 端点")}>
+              <input
+                name="url"
+                type="url"
+                placeholder="https://hooks.example.com/email"
+                defaultValue={webhook.data.url ?? ""}
+              />
+            </Field>
+            <label className="check">
+              <input
+                name="enabled"
+                type="checkbox"
+                defaultChecked={webhook.data.enabled}
+              />
+              {t("启用新邮件通知；关闭不影响收件")}
+            </label>
+            <div className="form-actions">
+              <button className="primary">{t("保存 Webhook")}</button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={
+                  testing ||
+                  !webhook.data.enabled ||
+                  !webhook.data.signing_secret_configured
+                }
+                onClick={() => void sendTest()}
+              >
+                {testing ? t("正在发送…") : t("发送合成测试")}
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+
+      <section className="webhook-records-section">
+        <div className="webhook-records-head">
+          <div>
+            <p className="eyebrow">48 HOURS</p>
+            <h2>{t("发送记录")}</h2>
+            <p>{t("记录到期后立即不可访问，并由维护任务彻底删除。")}</p>
+          </div>
+          <div className="record-filters">
+            <SelectField
+              value={kindFilter}
+              ariaLabel={t("记录类型")}
+              options={[
+                { value: "", label: t("全部类型") },
+                { value: "email", label: t("正式邮件") },
+                { value: "test", label: t("合成测试") },
+              ]}
+              onChange={(value) => changeFilter("type", value)}
+            />
+            <SelectField
+              value={resultFilter}
+              ariaLabel={t("发送结果")}
+              options={[
+                { value: "", label: t("全部结果") },
+                { value: "succeeded", label: t("已送达") },
+                { value: "failed", label: t("失败") },
+                { value: "retry", label: t("等待重试") },
+                { value: "interrupted", label: t("已中断") },
+              ]}
+              onChange={(value) => changeFilter("result", value)}
+            />
+          </div>
+        </div>
+        <div className="webhook-records-layout">
+          <div className="record-list">
+            {records.loading && !records.data ? (
+              <div className="record-loading">{t("正在加载发送记录…")}</div>
+            ) : records.data?.records.length ? (
+              records.data.records.map((record) => (
+                <button
+                  key={record.id}
+                  className={`record-row ${selectedId === record.id ? "selected" : ""}`}
+                  onClick={() => setSelectedId(record.id)}
+                >
+                  <span className={`state ${record.result}`}>
+                    {t(record.result)}
+                  </span>
+                  <span className="record-main">
+                    <strong>
+                      {record.subject_preview ||
+                        (record.kind === "test" ? t("合成测试") : t("无主题邮件"))}
+                    </strong>
+                    <small>{record.endpoint_url}</small>
+                  </span>
+                  <span className="record-code">
+                    {record.http_status ? `HTTP ${record.http_status}` : "—"}
+                    <small>
+                      {record.duration_ms == null ? "—" : `${record.duration_ms} ms`}
+                    </small>
+                  </span>
+                  <time>{fmt(record.started_at, locale)}</time>
+                </button>
+              ))
+            ) : (
+              <Empty title={t("最近没有发送记录")}>
+                {t("启用 Webhook 后，新邮件和合成测试会显示在这里。")}
+              </Empty>
+            )}
+            {(cursorHistory.length > 0 || records.data?.next_cursor) && (
+              <div className="record-pagination">
+                <button
+                  className="secondary"
+                  disabled={!cursorHistory.length}
+                  onClick={() => {
+                    const previous = cursorHistory.at(-1) ?? null;
+                    setCursor(previous);
+                    setCursorHistory((items) => items.slice(0, -1));
+                    setSelectedId(null);
+                  }}
+                >
+                  {t("上一页")}
+                </button>
+                <button
+                  className="secondary"
+                  disabled={!records.data?.next_cursor}
+                  onClick={() => {
+                    setCursorHistory((items) => [...items, cursor]);
+                    setCursor(records.data?.next_cursor ?? null);
+                    setSelectedId(null);
+                  }}
+                >
+                  {t("下一页")}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <aside className={`record-detail ${selectedId ? "open" : ""}`}>
+            {!selectedId ? (
+              <div className="record-detail-empty">
+                <Bell size={30} />
+                <h3>{t("选择一条记录")}</h3>
+                <p>{t("查看发送目标、请求内容和接收端响应。")}</p>
+              </div>
+            ) : detail.loading || !detail.data ? (
+              <div className="record-loading">{t("正在加载记录详情…")}</div>
+            ) : (
+              <>
+                <header>
+                  <div>
+                    <span className={`state ${detail.data.result}`}>
+                      {t(detail.data.result)}
+                    </span>
+                    <h3>{t("发送详情")}</h3>
+                  </div>
+                  <button
+                    className="icon"
+                    aria-label={t("关闭")}
+                    onClick={() => setSelectedId(null)}
+                  >
+                    <X />
+                  </button>
+                </header>
+                <dl className="record-detail-facts">
+                  <div><dt>{t("发送目标")}</dt><dd>{detail.data.endpoint_url}</dd></div>
+                  <div><dt>{t("发送时间")}</dt><dd>{fmt(detail.data.started_at, locale)}</dd></div>
+                  <div><dt>{t("状态码")}</dt><dd>{detail.data.http_status ?? "—"}</dd></div>
+                  <div><dt>{t("耗时")}</dt><dd>{detail.data.duration_ms == null ? "—" : `${detail.data.duration_ms} ms`}</dd></div>
+                  <div><dt>{t("记录过期")}</dt><dd>{fmt(detail.data.expires_at, locale)}</dd></div>
+                  {detail.data.error_code && <div><dt>{t("错误")}</dt><dd>{detail.data.error_code}</dd></div>}
+                </dl>
+                <details open>
+                  <summary>{t("请求头")}</summary>
+                  <pre>{Object.entries(detail.data.request_headers).map(([key, value]) => `${key}: ${value}`).join("\n") || "—"}</pre>
+                </details>
+                <details open>
+                  <summary>payload.json · {size(detail.data.payload_size_bytes)}</summary>
+                  {payload.error ? <ErrorNotice message={payload.error} /> : <pre>{prettyJson(payload.data)}</pre>}
+                </details>
+                <details>
+                  <summary>{t("原始 EML")} · {size(detail.data.raw_size_bytes)}</summary>
+                  <div className="record-content-actions">
+                    <button
+                      className="secondary"
+                      disabled={rawLoading}
+                      onClick={async () => {
+                        setRawLoading(true);
+                        try {
+                          setRawPreview(await requestText(`/webhook/records/${detail.data!.id}/raw`));
+                        } catch (rawError) {
+                          setError(rawError instanceof Error ? rawError.message : t("加载失败"));
+                        } finally {
+                          setRawLoading(false);
+                        }
+                      }}
+                    >
+                      {rawLoading ? t("正在加载…") : t("查看原文")}
+                    </button>
+                    <a className="secondary button-link" href={`/api/webhook/records/${detail.data.id}/raw`}>
+                      <DownloadSimple /> {t("下载 EML")}
+                    </a>
+                  </div>
+                  {rawPreview && <pre>{rawPreview}</pre>}
+                </details>
+                <details open>
+                  <summary>
+                    {t("响应 body")} · {size(detail.data.response_captured_bytes)}
+                    {detail.data.response_truncated ? ` · ${t("已截断")}` : ""}
+                  </summary>
+                  {responseBody.error ? <ErrorNotice message={responseBody.error} /> : <pre>{responseBody.data || t("空响应")}</pre>}
+                </details>
+              </>
+            )}
+          </aside>
+        </div>
+      </section>
+    </>
+  );
+}
+
 function SettingsPage() {
   const { locale, t } = useI18n();
   const domains = useAsync(() => request<Domain[]>("/domains"), []),
     tags = useAsync(() => request<TagRow[]>("/tags"), []),
     settings = useAsync(() => request<any>("/settings"), []),
-    webhook = useAsync(() => request<any>("/webhook"), []),
     status = useAsync(() => request<any>("/system/status"), []);
   const [error, setError] = useState("");
   async function addDomain(e: FormEvent<HTMLFormElement>) {
@@ -1294,7 +1708,6 @@ function SettingsPage() {
           domains.error ||
           tags.error ||
           settings.error ||
-          webhook.error ||
           status.error
         }
       />
@@ -1463,94 +1876,6 @@ function SettingsPage() {
                 />
               </Field>
               <button className="secondary">{t("保存保留期")}</button>
-            </form>
-          )}
-        </section>
-        <section className="setting-card settings-webhook">
-          <div className="section-title">
-            <div>
-              <Bell />
-              <h2>{t("完整 Webhook")}</h2>
-            </div>
-            <p>{t("一次 HTTPS POST 恰好包含 payload JSON 与完整 raw_email EML，并使用 HMAC-SHA256 签名。")}</p>
-          </div>
-          {webhook.data && (
-            <form
-              className="stack"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const f = new FormData(e.currentTarget),
-                  url = String(f.get("url") || "") || null,
-                  enabled = f.get("enabled") === "on";
-                const changed = url !== webhook.data.url;
-                if (
-                  changed &&
-                  !confirm(
-                    t("更换 URL 会取消旧目标的未完成任务，且不会自动转发到新目标。继续？"),
-                  )
-                )
-                  return;
-                try {
-                  await request("/webhook", {
-                    method: "PUT",
-                    body: JSON.stringify({
-                      enabled,
-                      url,
-                      confirm_cancel_pending: changed,
-                    }),
-                  });
-                  void webhook.refresh();
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : t("保存失败"));
-                }
-              }}
-            >
-              <Field label={t("HTTPS 端点")}>
-                <input
-                  name="url"
-                  type="url"
-                  placeholder="https://hooks.example.com/email"
-                  defaultValue={webhook.data.url ?? ""}
-                />
-              </Field>
-              <label className="check">
-                <input
-                  name="enabled"
-                  type="checkbox"
-                  defaultChecked={webhook.data.enabled}
-                />
-                {t("启用新邮件通知；关闭不影响收件")}
-              </label>
-              <div className="form-actions">
-                <button className="primary">{t("保存 Webhook")}</button>
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={
-                    !webhook.data.enabled ||
-                    !webhook.data.signing_secret_configured
-                  }
-                  onClick={async () => {
-                    try {
-                      const result = await request<any>("/webhook/test", {
-                        method: "POST",
-                      });
-                      alert(t("测试请求完成：HTTP {{status}}", { status: result.http_status }));
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : t("测试失败"));
-                    }
-                  }}
-                >
-                  {t("发送合成测试")}
-                </button>
-              </div>
-              <small>
-                {t("签名密钥：")}
-                {webhook.data.signing_secret_configured
-                  ? t("已配置")
-                  : t("未配置，无法发送")}{" "}
-                {t("· 端点版本 {{revision}}", { revision: webhook.data.revision })}
-              </small>
             </form>
           )}
         </section>

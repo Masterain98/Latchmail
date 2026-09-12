@@ -9,7 +9,7 @@ Latchmail is a single-admin, receive-only catch-all inbox for Cloudflare. Every 
 - One Module Worker handles HTTP, Email Routing and a per-minute Cron
 - D1 manages domains, labels, address registrations, message indexes, leases, the Outbox and maintenance state
 - Private R2 storage for raw EML, immutable payload JSON and regular/CID attachments
-- Bilingual React/Vite management UI with browser-language detection and persisted language choice; search, filters, read/archive/delete state, message bodies, attachments and delivery diagnostics
+- Bilingual React/Vite management UI with browser-language detection and persisted language choice; search, filters, read/archive/delete state, message bodies, attachments and a dedicated Webhook workspace with 48-hour send diagnostics
 - Streaming multipart Webhooks with `payload` JSON plus `raw_email` EML, HMAC-SHA256 signatures, bounded automatic retries and manual redelivery
 - Per-message attachment/raw retention snapshots from 1–3650 days, logical expiry before physical cleanup, and idempotent Cron deletion
 - Cookie/CSRF/Bearer authentication, persistent login rate limiting, validated Webhook destinations and isolated email HTML

@@ -10,4 +10,6 @@ D1 backup does not contain R2 mail bodies. A recoverable backup must snapshot/ex
 
 One maintenance click runs the same bounded functions as Cron. It cannot accept SQL, URL or object keys. Rotate `ADMIN_PASSWORD` to change browser login, `ADMIN_API_TOKEN` independently for automation, and `SESSION_SECRET` to invalidate all browser sessions; webhook key rotation needs a receiver overlap period. Never enable public `r2.dev` access.
 
+Webhook send diagnostics are intentionally ephemeral. Each completed attempt, its private request snapshot, and up to 64 KiB of response body are available for 48 hours. The API enforces logical expiry before Cron performs bounded R2-first cleanup. Terminal delivery tasks are also removed after 48 hours; active, retrying, leased, and paused tasks remain recoverable.
+
 `/healthz` verifies runtime database initialization and returns `503` with `database: migration_failed` if an empty, pending or legacy database cannot be brought to the bundled migration level. Inspect Worker logs and the `d1_migrations` ledger; never edit an applied migration or manually mark a failed migration complete. Build Secrets are uploaded additively, so deleting an optional runtime Secret is an explicit dashboard operation.

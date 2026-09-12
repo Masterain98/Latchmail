@@ -9,7 +9,7 @@ Latchmail 是一个部署在 Cloudflare 上的单管理员、仅收件 Catch-all
 - 一个 Module Worker 同时处理 HTTP、Email Routing 和每分钟 Cron
 - D1 管理域名、标签、完整地址登记、邮件索引、租约、Outbox 与维护状态
 - R2 私有保存 raw EML、不可变 payload JSON 和全部普通/CID 附件
-- React/Vite 中英文管理端：自动识别浏览器语言并记住显式选择，支持搜索、组合筛选、已读、归档、删除、正文、附件和通知诊断
+- React/Vite 中英文管理端：自动识别浏览器语言并记住显式选择，支持搜索、组合筛选、已读、归档、删除、正文、附件，以及带 48 小时发送诊断的独立 Webhook 工作区
 - `payload` JSON + `raw_email` EML 两部分流式 multipart Webhook，HMAC-SHA256 签名，有限自动重试和人工重投
 - 1～3650 天附件/raw 保留快照，逻辑到期立即拒绝读取，Cron 幂等物理删除
 - Cookie/CSRF/Bearer 鉴权、持久化登录限速、Webhook 目标校验、隔离邮件 HTML

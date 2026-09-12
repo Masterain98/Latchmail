@@ -23,6 +23,14 @@ import { iso, required } from "../repositories/db";
 import { sha256, uuid } from "../crypto";
 import { runMaintenance } from "../maintenance/service";
 import { sendWebhookParts } from "../webhooks/service";
+import {
+  beginSendRecord,
+  captureResponseBytes,
+  finishSendRecord,
+  putRequestSnapshot,
+  registerRequestSnapshot,
+  snapshotObjectKeys,
+} from "../webhooks/records";
 
 type AppBindings = { Bindings: Env; Variables: { worker: WorkerContext } };
 export const api = new Hono<AppBindings>();
@@ -645,6 +653,7 @@ api.post("/webhook/test", async (c) => {
     throw new AppError(409, "CONFLICT", "请先启用并保存 Webhook。");
   const eventId = uuid(),
     deliveryId = uuid(),
+    recordId = uuid(),
     timestamp = now();
   const rawBytes = new TextEncoder().encode(
     `From: fixture@example.net\r\nTo: test@example.invalid\r\nSubject: Latchmail webhook test\r\nMessage-ID: <${eventId}@example.invalid>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThis is a synthetic Latchmail webhook test.\r\n`,
@@ -690,15 +699,44 @@ api.post("/webhook/test", async (c) => {
   };
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload)),
     payloadHash = await sha256(payloadBytes),
-    base = `tests/${eventId}`;
+    snapshotId = recordId;
+  await registerRequestSnapshot(
+    c.env,
+    {
+      id: snapshotId,
+      deliveryId: null,
+      rawFilename: `${deliveryId}.eml`,
+      payloadSize: payloadBytes.byteLength,
+      rawSize: rawBytes.byteLength,
+    },
+    timestamp,
+  );
+  await putRequestSnapshot(
+    c.env,
+    snapshotId,
+    payloadBytes,
+    rawBytes,
+    timestamp,
+  );
+  await beginSendRecord(
+    c.env,
+    {
+      id: recordId,
+      snapshotId,
+      deliveryId,
+      eventId,
+      kind: "test",
+      attemptNumber: 1,
+      endpointUrl: settings.webhook_url,
+    },
+    timestamp,
+  );
+  const keys = snapshotObjectKeys(snapshotId);
+  let requestHeaders: Record<string, string> = {};
   try {
-    await Promise.all([
-      c.env.MAIL_STORAGE.put(`${base}/payload.json`, payloadBytes),
-      c.env.MAIL_STORAGE.put(`${base}/raw.eml`, rawBytes),
-    ]);
     const [p, r] = await Promise.all([
-      c.env.MAIL_STORAGE.get(`${base}/payload.json`),
-      c.env.MAIL_STORAGE.get(`${base}/raw.eml`),
+      c.env.MAIL_STORAGE.get(keys.payload),
+      c.env.MAIL_STORAGE.get(keys.raw),
     ]);
     if (!p || !r) throw new Error("TEST_OBJECT_MISSING");
     const response = await sendWebhookParts(
@@ -713,18 +751,184 @@ api.post("/webhook/test", async (c) => {
       r,
       `${deliveryId}.eml`,
       timestamp,
+      undefined,
+      (headers) => {
+        requestHeaders = headers;
+      },
     );
+    const finished = now();
+    const captured = await captureResponseBytes(response);
+    const accepted = response.status >= 200 && response.status < 300;
+    await finishSendRecord(c.env, {
+      id: recordId,
+      finishedAt: finished,
+      result: accepted ? "succeeded" : "failed",
+      httpStatus: response.status,
+      durationMs: finished - timestamp,
+      errorCode: accepted ? null : `HTTP_${response.status}`,
+      requestHeaders,
+      response: captured,
+    });
     return ok(c, {
       event_id: eventId,
+      record_id: recordId,
       http_status: response.status,
-      accepted: response.status >= 200 && response.status < 300,
+      accepted,
     });
-  } finally {
-    await Promise.all([
-      c.env.MAIL_STORAGE.delete(`${base}/payload.json`),
-      c.env.MAIL_STORAGE.delete(`${base}/raw.eml`),
-    ]);
+  } catch (error) {
+    const finished = now();
+    const errorCode =
+      error instanceof Error ? error.message.slice(0, 80) : "NETWORK_ERROR";
+    await finishSendRecord(c.env, {
+      id: recordId,
+      finishedAt: finished,
+      result: "failed",
+      httpStatus: null,
+      durationMs: finished - timestamp,
+      errorCode,
+      requestHeaders,
+      response: null,
+    });
+    throw error;
   }
+});
+
+const webhookRecordResults = new Set([
+  "started",
+  "succeeded",
+  "retry",
+  "failed",
+  "interrupted",
+]);
+const webhookRecordKinds = new Set(["email", "test"]);
+
+function webhookRecordJson(row: any): any {
+  return {
+    ...row,
+    response_truncated: Boolean(row.response_truncated),
+    started_at: iso(row.started_at),
+    finished_at: iso(row.finished_at),
+    expires_at: iso(row.expires_at),
+  };
+}
+
+async function webhookRecord(c: any): Promise<any> {
+  const row = await c.env.DB.prepare(
+    "SELECT r.*,s.payload_object_key,s.raw_object_key,s.raw_filename,s.payload_size_bytes,s.raw_size_bytes,s.capture_error_code FROM webhook_send_records r JOIN webhook_request_snapshots s ON s.id=r.snapshot_id WHERE r.id=?",
+  )
+    .bind(c.req.param("id"))
+    .first();
+  if (!row) throw new AppError(404, "NOT_FOUND", "Webhook 发送记录不存在。");
+  if (row.expires_at <= now())
+    throw new AppError(410, "CONTENT_EXPIRED", "Webhook 发送记录已过期。");
+  return row;
+}
+
+api.get("/webhook/records", async (c) => {
+  const where = ["r.expires_at>?"];
+  const values: unknown[] = [now()];
+  const result = c.req.query("result");
+  const kind = c.req.query("kind");
+  if (result) {
+    if (!webhookRecordResults.has(result))
+      throw new AppError(400, "BAD_REQUEST", "Webhook 记录结果筛选无效。");
+    where.push("r.result=?");
+    values.push(result);
+  }
+  if (kind) {
+    if (!webhookRecordKinds.has(kind))
+      throw new AppError(400, "BAD_REQUEST", "Webhook 记录类型筛选无效。");
+    where.push("r.kind=?");
+    values.push(kind);
+  }
+  const cursor = c.req.query("cursor");
+  if (cursor) {
+    const [startedAt, id] = cursorDecode(cursor);
+    where.push("(r.started_at<? OR (r.started_at=? AND r.id<?))");
+    values.push(startedAt, startedAt, id);
+  }
+  const limit = pageLimit(c.req.query("limit"));
+  values.push(limit + 1);
+  const rows = await c.env.DB.prepare(
+    `SELECT r.id,r.delivery_id,r.event_id,r.kind,r.attempt_number,r.endpoint_url,r.started_at,r.finished_at,r.result,r.http_status,r.duration_ms,r.error_code,r.response_content_type,r.response_captured_bytes,r.response_truncated,r.response_excerpt,r.expires_at,m.subject_preview,m.envelope_to_normalized FROM webhook_send_records r LEFT JOIN webhook_deliveries d ON d.id=r.delivery_id LEFT JOIN messages m ON m.id=d.message_id WHERE ${where.join(" AND ")} ORDER BY r.started_at DESC,r.id DESC LIMIT ?`,
+  )
+    .bind(...values)
+    .all<any>();
+  const hasMore = rows.results.length > limit;
+  const visible = rows.results.slice(0, limit);
+  const last = visible.at(-1);
+  return ok(c, {
+    records: visible.map(webhookRecordJson),
+    next_cursor:
+      hasMore && last ? cursorEncode(last.started_at, last.id) : null,
+  });
+});
+
+api.get("/webhook/records/:id", async (c) => {
+  const row = await webhookRecord(c);
+  let requestHeaders: Record<string, string>;
+  try {
+    requestHeaders = JSON.parse(row.request_headers_json);
+  } catch {
+    requestHeaders = {};
+  }
+  const safe = { ...row };
+  delete safe.request_headers_json;
+  delete safe.payload_object_key;
+  delete safe.raw_object_key;
+  delete safe.response_object_key;
+  return ok(c, webhookRecordJson({ ...safe, request_headers: requestHeaders }));
+});
+
+api.get("/webhook/records/:id/payload", async (c) => {
+  const row = await webhookRecord(c);
+  const object = await c.env.MAIL_STORAGE.get(row.payload_object_key);
+  if (!object)
+    throw new AppError(404, "NOT_FOUND", "Webhook 请求内容不可用。");
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+});
+
+api.get("/webhook/records/:id/raw", async (c) => {
+  const row = await webhookRecord(c);
+  const object = await c.env.MAIL_STORAGE.get(row.raw_object_key);
+  if (!object)
+    throw new AppError(404, "NOT_FOUND", "Webhook 请求内容不可用。");
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": "message/rfc822",
+      "Content-Disposition": `attachment; filename="${safeDownloadName(row.raw_filename)}"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+});
+
+api.get("/webhook/records/:id/response", async (c) => {
+  const row = await webhookRecord(c);
+  if (!row.response_object_key)
+    return new Response("", {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "private, no-store",
+      },
+    });
+  const object = await c.env.MAIL_STORAGE.get(row.response_object_key);
+  if (!object)
+    throw new AppError(404, "NOT_FOUND", "Webhook 响应内容不可用。");
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": row.response_content_type || "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${row.id}-response.body"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 });
 
 api.get("/webhook/deliveries", async (c) => {
